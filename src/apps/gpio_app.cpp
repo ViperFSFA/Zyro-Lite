@@ -1,6 +1,8 @@
 #include "app_api.h"
 #include <SPI.h>
+#include <SD.h>
 #include <RadioLib.h>
+#include <vector>
 #include "pins.h"
 #include "display.h"
 #include "settings.h"
@@ -10,19 +12,8 @@
 
 extern SPIClass *gSharedSPI;
 
-// GPIO app: talks to whatever's plugged into the external connector.
-//
-// NRF24L01 / CC1101 submodes need real pin numbers in pins.h
-// (GPIO_NRF24_*, GPIO_CC1101_*) before they'll do anything - see the big
-// comment there. Until then they just report "Not configured" instead of
-// guessing at wiring and potentially colliding with a pin already used
-// elsewhere in the firmware.
-//
-// "Custom" pulls the pins listed in GPIO_CUSTOM_PINS (pins.h) HIGH, one at a
-// time or together, for as long as you're in this app - onExit() always
-// drives every one of them back to INPUT (effectively off) the instant you
-// leave, whether you backed out normally or the app was closed some other
-// way, so nothing is left energized after you've stopped looking at it.
+// GPIO app: talks to external connector pins.
+// Pins are configured via /gpio_pins.conf on the SD card (auto-generated if missing).
 
 namespace GpioApp {
 
@@ -39,15 +30,99 @@ static Menu *subSubMenu = nullptr;
 static bool exitApp = false;
 static uint32_t lastDrawMs = 0;
 
+// Dynamic pin config loaded from /gpio_pins.conf on SD card
+static std::vector<int> dynamicCustomPins = { 16, 43, 44 }; // Default T-Deck pins (16=Touch INT, 43=GPS TX, 44=GPS RX)
+static int dynamicNrfCe = GPIO_NRF24_CE_PIN;
+static int dynamicNrfCsn = GPIO_NRF24_CSN_PIN;
+static int dynamicCcCs = GPIO_CC1101_CS_PIN;
+static int dynamicCcGdo0 = GPIO_CC1101_GDO0_PIN;
+static int dynamicCcGdo2 = GPIO_CC1101_GDO2_PIN;
+
 // --- NRF24L01 ---
 static nRF24 *nrf = nullptr;
 static Module *nrfModule = nullptr;
-static bool nrfConfigured = (GPIO_NRF24_CE_PIN >= 0 && GPIO_NRF24_CSN_PIN >= 0);
+static bool nrfConfigured = false;
 static bool nrfOk = false;
+
+// --- CC1101 ---
+static CC1101 *cc = nullptr;
+static Module *ccModule = nullptr;
+static bool ccConfigured = false;
+static bool ccOk = false;
+
+// --- Custom Pin Control ---
+static bool customPinOn[16] = {false};
+static int customSel = 0;
+
+static void loadGpioPinsConfig() {
+    dynamicCustomPins = { 16, 43, 44 };
+    dynamicNrfCe = GPIO_NRF24_CE_PIN;
+    dynamicNrfCsn = GPIO_NRF24_CSN_PIN;
+    dynamicCcCs = GPIO_CC1101_CS_PIN;
+    dynamicCcGdo0 = GPIO_CC1101_GDO0_PIN;
+    dynamicCcGdo2 = GPIO_CC1101_GDO2_PIN;
+
+    if (!SD.exists("/gpio_pins.conf")) {
+        File f = SD.open("/gpio_pins.conf", FILE_WRITE);
+        if (f) {
+            f.println("# Zyro-Lite GPIO Pin Map");
+            f.println("# Default T-Deck pins: 16 (Touch INT), 43 (GPS TX), 44 (GPS RX)");
+            f.println("CUSTOM_PINS=16,43,44");
+            f.println("NRF24_CE=-1");
+            f.println("NRF24_CSN=-1");
+            f.println("CC1101_CS=-1");
+            f.println("CC1101_GDO0=-1");
+            f.println("CC1101_GDO2=-1");
+            f.close();
+        }
+    } else {
+        File f = SD.open("/gpio_pins.conf", FILE_READ);
+        if (f) {
+            dynamicCustomPins.clear();
+            while (f.available()) {
+                String line = f.readStringUntil('\n');
+                line.trim();
+                if (line.length() == 0 || line.startsWith("#")) continue;
+
+                int eq = line.indexOf('=');
+                if (eq < 0) continue;
+                String key = line.substring(0, eq);
+                String val = line.substring(eq + 1);
+                key.trim(); val.trim();
+
+                if (key == "CUSTOM_PINS") {
+                    int start = 0;
+                    while (start < (int)val.length()) {
+                        int comma = val.indexOf(',', start);
+                        if (comma < 0) comma = (int)val.length();
+                        String pStr = val.substring(start, comma);
+                        pStr.trim();
+                        if (pStr.length() > 0) {
+                            int pin = pStr.toInt();
+                            if (pin >= 0) dynamicCustomPins.push_back(pin);
+                        }
+                        start = comma + 1;
+                    }
+                } else if (key == "NRF24_CE") dynamicNrfCe = val.toInt();
+                else if (key == "NRF24_CSN") dynamicNrfCsn = val.toInt();
+                else if (key == "CC1101_CS") dynamicCcCs = val.toInt();
+                else if (key == "CC1101_GDO0") dynamicCcGdo0 = val.toInt();
+                else if (key == "CC1101_GDO2") dynamicCcGdo2 = val.toInt();
+            }
+            f.close();
+        }
+    }
+
+    if (dynamicCustomPins.empty()) {
+        dynamicCustomPins = { 16, 43, 44 };
+    }
+    nrfConfigured = (dynamicNrfCe >= 0 && dynamicNrfCsn >= 0);
+    ccConfigured = (dynamicCcCs >= 0 && dynamicCcGdo0 >= 0);
+}
 
 static void nrfSetup() {
     if (!nrfConfigured || nrfOk) return;
-    nrfModule = new Module(GPIO_NRF24_CSN_PIN, RADIOLIB_NC, GPIO_NRF24_CE_PIN, RADIOLIB_NC, *gSharedSPI);
+    nrfModule = new Module(dynamicNrfCsn, RADIOLIB_NC, dynamicNrfCe, RADIOLIB_NC, *gSharedSPI);
     nrf = new nRF24(nrfModule);
     int state = nrf->begin();
     nrfOk = (state == RADIOLIB_ERR_NONE);
@@ -60,7 +135,7 @@ static void drawNrf24() {
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
-    gfx->print("NRF24L01");
+    gfx->print("NRF24L01 Radio");
 
     gfx->setTextColor(t.fg);
     gfx->setCursor(8, TOPBAR_HEIGHT + 26);
@@ -68,20 +143,20 @@ static void drawNrf24() {
         gfx->setTextColor(t.warn);
         gfx->print("Not configured.");
         gfx->setCursor(8, TOPBAR_HEIGHT + 44);
-        gfx->print("Set GPIO_NRF24_CE_PIN /");
+        gfx->print("Set NRF24_CE / NRF24_CSN in");
         gfx->setCursor(8, TOPBAR_HEIGHT + 60);
-        gfx->print("GPIO_NRF24_CSN_PIN in pins.h");
+        gfx->print("gpio_pins.conf on SD card");
         return;
     }
     if (!nrfOk) {
         gfx->setTextColor(t.bad);
-        gfx->print("Init failed - check wiring");
+        gfx->print("Init failed - check 3.3V/SPI wiring");
         return;
     }
     gfx->setTextColor(t.ok);
     gfx->print("Radio up, listening (2.4GHz)");
 
-    if (nrf->available()) {
+    if (nrf && nrf->available()) {
         String data;
         int state = nrf->readData(data);
         if (state == RADIOLIB_ERR_NONE) {
@@ -92,18 +167,11 @@ static void drawNrf24() {
     }
 }
 
-// --- CC1101 ---
-static CC1101 *cc = nullptr;
-static Module *ccModule = nullptr;
-static bool ccConfigured = (GPIO_CC1101_CS_PIN >= 0 && GPIO_CC1101_GDO0_PIN >= 0);
-static bool ccOk = false;
-
 static void ccSetup() {
     if (!ccConfigured || ccOk) return;
-    ccModule = new Module(GPIO_CC1101_CS_PIN, GPIO_CC1101_GDO0_PIN,
-                           RADIOLIB_NC, GPIO_CC1101_GDO2_PIN, *gSharedSPI);
+    ccModule = new Module(dynamicCcCs, dynamicCcGdo0, RADIOLIB_NC, dynamicCcGdo2, *gSharedSPI);
     cc = new CC1101(ccModule);
-    int state = cc->begin();
+    int state = cc->begin(433.92);
     ccOk = (state == RADIOLIB_ERR_NONE);
 }
 
@@ -121,9 +189,9 @@ static void drawCc1101() {
         gfx->setTextColor(t.warn);
         gfx->print("Not configured.");
         gfx->setCursor(8, TOPBAR_HEIGHT + 44);
-        gfx->print("Set GPIO_CC1101_CS_PIN /");
+        gfx->print("Set CC1101_CS / CC1101_GDO0 in");
         gfx->setCursor(8, TOPBAR_HEIGHT + 60);
-        gfx->print("GPIO_CC1101_GDO0_PIN in pins.h");
+        gfx->print("gpio_pins.conf on SD card");
         return;
     }
     if (!ccOk) {
@@ -138,7 +206,6 @@ static void drawCc1101() {
     gfx->print("RSSI: " + String(cc->getRSSI(), 1) + " dBm");
 }
 
-// --- Read GPIO ---
 static void drawReadGpio() {
     const Theme &t = gSettings.theme();
     gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
@@ -147,19 +214,16 @@ static void drawReadGpio() {
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
     gfx->print("Read GPIO");
 
-    if (GPIO_CUSTOM_PIN_COUNT == 0) {
+    size_t n = dynamicCustomPins.size();
+    if (n == 0) {
         gfx->setTextColor(t.warn);
         gfx->setCursor(8, TOPBAR_HEIGHT + 26);
-        gfx->print("No pins listed yet.");
-        gfx->setCursor(8, TOPBAR_HEIGHT + 42);
-        gfx->print("Add them to GPIO_CUSTOM_PINS");
-        gfx->setCursor(8, TOPBAR_HEIGHT + 58);
-        gfx->print("in pins.h");
+        gfx->print("No pins defined in gpio_pins.conf");
         return;
     }
 
-    for (size_t i = 0; i < GPIO_CUSTOM_PIN_COUNT; i++) {
-        int pin = GPIO_CUSTOM_PINS[i];
+    for (size_t i = 0; i < n && i < 16; i++) {
+        int pin = dynamicCustomPins[i];
         pinMode(pin, INPUT);
         bool state = digitalRead(pin);
         int y = TOPBAR_HEIGHT + 26 + i * 20;
@@ -171,17 +235,13 @@ static void drawReadGpio() {
     }
 }
 
-// --- Custom (pull selected pins HIGH) ---
-static bool customPinOn[16] = {false}; // indexed same as GPIO_CUSTOM_PINS, capped at 16 entries
-static int customSel = 0;
-
 static void customApplyAll(bool allOff) {
-    for (size_t i = 0; i < GPIO_CUSTOM_PIN_COUNT && i < 16; i++) {
-        int pin = GPIO_CUSTOM_PINS[i];
+    for (size_t i = 0; i < dynamicCustomPins.size() && i < 16; i++) {
+        int pin = dynamicCustomPins[i];
         bool on = !allOff && customPinOn[i];
         pinMode(pin, OUTPUT);
         digitalWrite(pin, on ? HIGH : LOW);
-        if (!on) pinMode(pin, INPUT); // fully release when off, not just driven low
+        if (!on) pinMode(pin, INPUT);
     }
 }
 
@@ -193,19 +253,16 @@ static void drawCustom() {
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
     gfx->print("Custom GPIO (OK=toggle HIGH)");
 
-    if (GPIO_CUSTOM_PIN_COUNT == 0) {
+    size_t n = dynamicCustomPins.size();
+    if (n == 0) {
         gfx->setTextColor(t.warn);
         gfx->setCursor(8, TOPBAR_HEIGHT + 26);
-        gfx->print("No pins listed yet.");
-        gfx->setCursor(8, TOPBAR_HEIGHT + 42);
-        gfx->print("Add them to GPIO_CUSTOM_PINS");
-        gfx->setCursor(8, TOPBAR_HEIGHT + 58);
-        gfx->print("in pins.h");
+        gfx->print("No pins listed in gpio_pins.conf");
         return;
     }
 
-    for (size_t i = 0; i < GPIO_CUSTOM_PIN_COUNT; i++) {
-        int pin = GPIO_CUSTOM_PINS[i];
+    for (size_t i = 0; i < n && i < 16; i++) {
+        int pin = dynamicCustomPins[i];
         int y = TOPBAR_HEIGHT + 26 + i * 22;
         bool hi = ((int)i == customSel);
         if (hi) gfx->fillRect(4, y - 2, SCREEN_W - 8, 18, t.accent);
@@ -222,6 +279,7 @@ static void drawCustom() {
 static void init() {
     exitApp = false;
     currentMode = MODE_MENU;
+    loadGpioPinsConfig();
 
     if (subSubMenu) delete subSubMenu;
     std::vector<MenuItem> items = {
@@ -246,7 +304,7 @@ static void tick() {
             case MODE_NRF24:  drawNrf24();  break;
             case MODE_CC1101: drawCc1101(); break;
             case MODE_READ:   drawReadGpio(); break;
-            default: break; // MODE_CUSTOM only redraws on input, not on a timer
+            default: break;
         }
     }
 }
@@ -263,7 +321,7 @@ static void handleInput(const InputResult &in) {
     }
 
     if (in.type == InputEvent::BACK) {
-        if (currentMode == MODE_CUSTOM) customApplyAll(true); // release pins the moment you leave this screen
+        if (currentMode == MODE_CUSTOM) customApplyAll(true);
         currentMode = MODE_MENU;
         audioClickBack();
         if (subSubMenu) subSubMenu->draw();
@@ -271,7 +329,7 @@ static void handleInput(const InputResult &in) {
     }
 
     if (currentMode == MODE_CUSTOM) {
-        int n = (int)GPIO_CUSTOM_PIN_COUNT;
+        int n = (int)dynamicCustomPins.size();
         if (n == 0) return;
         if (in.type == InputEvent::NAV_UP) {
             customSel = (customSel - 1 + n) % n;
@@ -288,8 +346,6 @@ static void handleInput(const InputResult &in) {
 }
 
 static void onExit() {
-    // Hard guarantee: whatever Custom left driven HIGH turns off the instant
-    // this app closes, regardless of how it closed.
     customApplyAll(true);
 
     if (subSubMenu) {
@@ -302,7 +358,7 @@ static void onExit() {
 
 static bool wantsExit() { return exitApp; }
 
-}
+} // namespace GpioApp
 
 AppModule gpioAppGet() {
     return { GpioApp::init, GpioApp::tick, GpioApp::handleInput, GpioApp::onExit, GpioApp::wantsExit };

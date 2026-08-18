@@ -85,5 +85,6 @@ void settingsSave() {
     f.printf("haptic=%d\n", gSettings.hapticClicks ? 1 : 0);
     f.printf("hl_style=%u\n", gSettings.highlightStyle);
     f.printf("kb_backlight=%d\n", gSettings.keyboardBacklight ? 1 : 0);
+    f.printf("enable_boot_log=%d\n", gSettings.enableBootLog ? 1 : 0);
     f.close();
 }

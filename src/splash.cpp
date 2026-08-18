@@ -10,6 +10,7 @@
 #include "config.h"
 #include "theme.h"
 #include "settings.h"
+#include "audio.h"
 
 static AnimatedGIF gif;
 static File gifFile;
@@ -184,23 +185,204 @@ static bool showBootImageSplash() {
     return true;
 }
 
-static void showFallbackSplash() {
-    const Theme &t = gSettings.theme();
-    gfx->fillScreen(t.bg);
-    gfx->setTextColor(t.accent);
-    gfx->setTextSize(3);
-    int16_t titleW = (int)strlen(FW_NAME) * 18;
-    int16_t x = (SCREEN_W - titleW) / 2;
-    gfx->setCursor(x, SCREEN_H / 2 - 20);
-    gfx->print(FW_NAME);
+#ifndef ZYRO_RGB565
+#define ZYRO_RGB565(r, g, b) ((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3))
+#endif
 
-    // Small accent underline beneath the title. a cheap way to make the plain fallback splash (no SD / no GIF) 
-    gfx->fillRoundRect(x, SCREEN_H / 2 + 2, titleW, 2, 1, t.accent);
+static void showCyberpunkBootScreen(bool sdOk) {
+    uint16_t cBg       = ZYRO_RGB565(6, 9, 15);      // #06090F space dark
+    uint16_t cFrame    = ZYRO_RGB565(30, 45, 70);    // #1E2D46 slate blue frame
+    uint16_t cAccent   = ZYRO_RGB565(52, 211, 153);  // #34D399 emerald green
+    uint16_t cCyan     = ZYRO_RGB565(103, 232, 249); // #67E8F9 cyan
+    uint16_t cText     = ZYRO_RGB565(232, 237, 245); // #E8EDF5 off-white
+    uint16_t cMuted    = ZYRO_RGB565(138, 155, 184); // #8A9BB8
+    uint16_t cWarn     = ZYRO_RGB565(251, 191, 36);  // #FBBF24 amber warning
+    uint16_t cTerminal = ZYRO_RGB565(10, 14, 22);    // #0A0E16 deep console
+
+    struct BootStep {
+        const char *tag;
+        const char *msg;
+        uint16_t tagColor;
+        uint16_t msgColor;
+        uint16_t delayMs;
+    };
+
+    const BootStep steps[] = {
+        { "INIT", "Initializing Zyro-Lite", cCyan, cCyan, 120 },
+        { "CPU ", "Dual-Core Xtensa LX7 @ 240MHz", cAccent, cText, 100 },
+        { "MEM ", "PSRAM 8MB OK", cAccent, cText, 100 },
+        { "DISK", sdOk ? "SD Storage: Mounted" : "SD Storage: Standalone Mode", sdOk ? cAccent : cWarn, sdOk ? cText : cWarn, 120 },
+        { "DISP", "ST7789V 320x240 RGB565", cAccent, cText, 100 },
+        { "RADIO", "SX1262 Sub-GHz", cAccent, cText, 120 },
+        { "INPUT", "T-Deck I2C Ready", cAccent, cText, 120 },
+        { "SYS ", "All Systems Healthy", cAccent, cCyan, 160 }
+    };
+
+    int totalSteps = sizeof(steps) / sizeof(steps[0]);
+
+    // Initial background clear
+    gfx->fillRect(0, 0, SCREEN_W, SCREEN_H, cBg);
+
+    // Double-line outer cyber frame
+    gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8, cFrame);
+    gfx->drawRect(5, 5, SCREEN_W - 10, SCREEN_H - 10, cFrame);
+
+    // Glowing cyan corner brackets
+    auto drawCorner = [](int x, int y, int dx, int dy) {
+        gfx->fillRect(x, y, 10 * dx, 2 * dy, ZYRO_RGB565(103, 232, 249));
+        gfx->fillRect(x, y, 2 * dx, 10 * dy, ZYRO_RGB565(103, 232, 249));
+    };
+    drawCorner(4, 4, 1, 1);
+    drawCorner(SCREEN_W - 5, 4, -1, 1);
+    drawCorner(4, SCREEN_H - 5, 1, -1);
+    drawCorner(SCREEN_W - 5, SCREEN_H - 5, -1, -1);
+
+    // Header bar
+    gfx->fillRect(10, 10, SCREEN_W - 20, 24, cTerminal);
+    gfx->drawRect(10, 10, SCREEN_W - 20, 24, cFrame);
 
     gfx->setTextSize(1);
-    gfx->setTextColor(t.dim);
-    gfx->setCursor(SCREEN_W / 2 - 40, SCREEN_H / 2 + 14);
-    gfx->print("v" FW_VERSION);
+    gfx->setCursor(18, 18);
+    gfx->setTextColor(cCyan);
+    gfx->print("ZYRO-LITE OS");
+
+    gfx->setCursor(105, 18);
+    gfx->setTextColor(cMuted);
+    gfx->print("T-DECK HARDWARE BRIDGE");
+
+    // Status Badge
+    int badgeW = 76;
+    int badgeH = 16;
+    int badgeX = SCREEN_W - badgeW - 16;
+    int badgeY = 14;
+    gfx->fillRect(badgeX, badgeY, badgeW, badgeH, cBg);
+    gfx->drawRect(badgeX, badgeY, badgeW, badgeH, cWarn);
+    gfx->setCursor(badgeX + 8, badgeY + 4);
+    gfx->setTextColor(cWarn);
+    gfx->print("BOOTING");
+
+    // Main Terminal Console Box
+    int termX = 10;
+    int termY = 38;
+    int termW = SCREEN_W - 20;
+    int termH = 154;
+
+    gfx->fillRect(termX, termY, termW, termH, cTerminal);
+    gfx->drawRect(termX, termY, termW, termH, cFrame);
+
+    // Tab Label
+    gfx->fillRect(termX + 10, termY - 4, 110, 8, cBg);
+    gfx->setCursor(termX + 14, termY - 3);
+    gfx->setTextColor(cMuted);
+    gfx->print("SYSTEM_DIAG.LOG");
+
+    // Bottom Progress Bar Box
+    int barX = 10;
+    int barY = 198;
+    int barW = SCREEN_W - 20;
+    int barH = 26;
+    gfx->fillRect(barX, barY, barW, barH, cTerminal);
+    gfx->drawRect(barX, barY, barW, barH, cFrame);
+
+    gfx->flush();
+
+    // Type out each diagnostic boot step
+    for (int s = 0; s < totalSteps; s++) {
+        const BootStep &st = steps[s];
+
+        int lineY = termY + 8 + s * 18;
+
+        // Tag box [ INIT ] / [ CPU ]
+        gfx->fillRect(termX + 8, lineY, 44, 14, cBg);
+        gfx->drawRect(termX + 8, lineY, 44, 14, st.tagColor);
+        gfx->setCursor(termX + 12, lineY + 3);
+        gfx->setTextColor(st.tagColor);
+        gfx->print(st.tag);
+
+        // Step description
+        gfx->setCursor(termX + 58, lineY + 3);
+        gfx->setTextColor(st.msgColor);
+        gfx->print(st.msg);
+
+        // Update progress bar
+        int pct = ((s + 1) * 100) / totalSteps;
+        int fillW = (pct * (barW - 4)) / 100;
+        gfx->fillRect(barX + 2, barY + 2, barW - 4, barH - 4, cTerminal);
+        if (fillW > 0) {
+            gfx->fillRect(barX + 2, barY + 2, fillW, barH - 4, cAccent);
+        }
+
+        // Percentage text inside bar
+        char pctBuf[28];
+        snprintf(pctBuf, sizeof(pctBuf), "INITIALIZING %d%%", pct);
+        int txtX = barX + (barW - strlen(pctBuf) * 6) / 2;
+        gfx->setCursor(txtX, barY + 9);
+        gfx->setTextColor((pct > 52) ? cTerminal : cText);
+        gfx->print(pctBuf);
+
+        audioClickNav();
+        gfx->flush();
+        delay(st.delayMs);
+    }
+
+    // Final READY state badge
+    badgeX = SCREEN_W - badgeW - 16;
+    badgeY = 14;
+    gfx->fillRect(badgeX, badgeY, badgeW, badgeH, cBg);
+    gfx->drawRect(badgeX, badgeY, badgeW, badgeH, cAccent);
+    gfx->setCursor(badgeX + 14, badgeY + 4);
+    gfx->setTextColor(cAccent);
+    gfx->print("READY");
+    gfx->flush();
+    delay(400);
+}
+
+static void showRotatingDotsSplash() {
+    uint16_t cBg     = ZYRO_RGB565(8, 11, 18);
+    uint16_t cText   = ZYRO_RGB565(240, 244, 250);
+    uint16_t cDim    = ZYRO_RGB565(120, 135, 160);
+    uint16_t cAccent = ZYRO_RGB565(52, 211, 153);
+    uint16_t cCyan   = ZYRO_RGB565(103, 232, 249);
+
+    int cx = SCREEN_W / 2;
+    int cy = SCREEN_H / 2 + 15;
+    int r = 22;
+
+    uint32_t start = millis();
+    int frame = 0;
+
+    while (millis() - start < SPLASH_DURATION_MS) {
+        gfx->fillRect(0, 0, SCREEN_W, SCREEN_H, cBg);
+
+        // Title
+        gfx->setTextSize(3);
+        gfx->setTextColor(cText);
+        int titleW = (int)strlen(FW_NAME) * 18;
+        gfx->setCursor((SCREEN_W - titleW) / 2, SCREEN_H / 2 - 50);
+        gfx->print(FW_NAME);
+
+        // Subtitle / Version
+        gfx->setTextSize(1);
+        gfx->setTextColor(cDim);
+        gfx->setCursor((SCREEN_W - 48) / 2, SCREEN_H / 2 - 20);
+        gfx->print("v" FW_VERSION);
+
+        // Rotating dots (8 dots in a circle)
+        for (int i = 0; i < 8; i++) {
+            float angle = ((frame + i) % 8) * (2.0f * 3.14159f / 8.0f);
+            int dx = (int)(cx + r * cos(angle));
+            int dy = (int)(cy + r * sin(angle));
+
+            int dotRadius = (i == 7) ? 4 : ((i >= 5) ? 3 : 2);
+            uint16_t dotCol = (i == 7) ? cAccent : ((i >= 5) ? cCyan : cDim);
+
+            gfx->fillCircle(dx, dy, dotRadius, dotCol);
+        }
+
+        gfx->flush();
+        frame = (frame + 1) % 8;
+        delay(60);
+    }
 }
 
 void showSplash(bool sdOk) {
@@ -216,13 +398,8 @@ void showSplash(bool sdOk) {
             uint32_t start = millis();
             while (millis() - start < SPLASH_DURATION_MS) {
                 if (!gif.playFrame(true, NULL)) {
-                    gif.reset(); // loop the gif until the 2s window is up
+                    gif.reset();
                 }
-                // Canvas doesn't show anything until flushed - each
-                // playFrame() call above just finished compositing one
-                // complete GIF frame into the framebuffer, so this is the
-                // right place to push it, once per frame rather than once
-                // per scanline (gifDraw() runs per-scanline internally).
                 gfx->flush();
             }
             gif.close();
@@ -231,15 +408,10 @@ void showSplash(bool sdOk) {
     }
 
     if (!played) {
-        showFallbackSplash();
-        if (!sdOk) {
-            const Theme &t = gSettings.theme();
-            gfx->setTextColor(t.warn);
-            gfx->setCursor(20, SCREEN_H - 30);
-            gfx->setTextSize(1);
-            gfx->print("No SD card detected (recommended)");
+        if (gSettings.enableBootLog) {
+            showCyberpunkBootScreen(sdOk);
+        } else {
+            showRotatingDotsSplash();
         }
-        gfx->flush();
-        delay(SPLASH_DURATION_MS);
     }
 }

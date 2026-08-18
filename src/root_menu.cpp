@@ -12,6 +12,7 @@
 #include "money_64_64_28f.h"       // Games
 #include "add_folder_64_64_28f.h"  // Apps (file browser)
 #include "ble_64_64_28f.h"         // BLE (converted from a static bitmap - all frames identical)
+#include "tune_64_64_28f.h"        // GPIO / Tuning
 
 extern AppModule *gActiveApp; // defined in main.cpp
 extern AppModule gAppTable[]; // defined in main.cpp, indexed same order as items below
@@ -41,6 +42,7 @@ void rootMenuInit() {
         { "LoRa",      "LR", [](){ launch(3); }, qr_code_64_64_28f_frames, ICON_FRAME_COUNT },
         { "RF",        "RF", [](){ launch(4); }, activity_64_64_28f_frames, ICON_FRAME_COUNT },
         { "GPS",       "GP", [](){ launch(5); }, compass_64_64_28f_frames, ICON_FRAME_COUNT },
+        { "GPIO",      "IO", [](){ launch(9); }, tune_64_64_28f_frames, ICON_FRAME_COUNT },
         { "Ethernet",  "EN", [](){ launch(6); }, connect_64_64_28f_frames, ICON_FRAME_COUNT },
         { "Games",     "GM", [](){ launch(7); }, money_64_64_28f_frames, ICON_FRAME_COUNT },
         { "Apps",      "AP", [](){ launch(8); }, add_folder_64_64_28f_frames, ICON_FRAME_COUNT },

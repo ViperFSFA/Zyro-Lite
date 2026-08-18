@@ -15,6 +15,7 @@ enum MenuMode {
     MENU_SCREEN,
     MENU_SOUND,
     MENU_KEYBOARD,
+    MENU_STARTUP,
     MENU_POWER,
     MENU_FACTORY_RESET
 };
@@ -49,10 +50,11 @@ static int rowCount() {
         case MENU_SCREEN: return 3;
         case MENU_SOUND: return 3;
         case MENU_KEYBOARD: return 2;
+        case MENU_STARTUP: return 2;
         case MENU_POWER: return 4;
         case MENU_FACTORY_RESET: return 2;
         case MENU_ROOT:
-        default: return 6;
+        default: return 7;
     }
 }
 
@@ -87,6 +89,11 @@ static String rowLabel(int index) {
                 case 0: return "Kbd Backlight";
                 default: return "Back";
             }
+        case MENU_STARTUP:
+            switch (index) {
+                case 0: return "Enable Logging";
+                default: return "Back";
+            }
         case MENU_POWER:
             switch (index) {
                 case 0: return "Power Off";
@@ -106,7 +113,8 @@ static String rowLabel(int index) {
                 case 1: return "Screen";
                 case 2: return "Sound";
                 case 3: return "Keyboard";
-                case 4: return "Power Options";
+                case 4: return "Startup";
+                case 5: return "Power Options";
                 default: return "Factory Reset";
             }
     }
@@ -136,6 +144,8 @@ static String rowValue(int index) {
             }
         case MENU_KEYBOARD:
             return (index == 0) ? (gSettings.keyboardBacklight ? "On" : "Off") : "";
+        case MENU_STARTUP:
+            return (index == 0) ? (gSettings.enableBootLog ? "On" : "Off") : "";
         case MENU_POWER:
             switch (index) {
                 case 0: return "";
@@ -272,6 +282,11 @@ static void adjust(int dir) {
                 keyboardSetBacklight(gSettings.keyboardBacklight);
             }
             break;
+        case MENU_STARTUP:
+            if (sel == 0) {
+                gSettings.enableBootLog = !gSettings.enableBootLog;
+            }
+            break;
         case MENU_POWER:
             if (sel == 2) {
                 gSettings.batterySaver = !gSettings.batterySaver;
@@ -344,8 +359,9 @@ static void enterCurrentCategory() {
                 case 1: mode = MENU_SCREEN; break;
                 case 2: mode = MENU_SOUND; break;
                 case 3: mode = MENU_KEYBOARD; break;
-                case 4: mode = MENU_POWER; break;
-                case 5: mode = MENU_FACTORY_RESET; break;
+                case 4: mode = MENU_STARTUP; break;
+                case 5: mode = MENU_POWER; break;
+                case 6: mode = MENU_FACTORY_RESET; break;
                 default: break;
             }
             break;

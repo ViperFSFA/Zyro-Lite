@@ -26,6 +26,7 @@ struct Settings {
                                          // also be on for Nav clicks to play. OK/Back only need Sound.
     uint8_t highlightStyle  = HIGHLIGHT_FILLED; // menu row selection look
     bool    keyboardBacklight = false;  // T-Deck keyboard's own backlight LEDs
+    bool    enableBootLog   = false;    // if true, shows system log boot screen; else rotating dots splash
 
     const Theme &theme() const { return THEMES[themeId]; }
 };
