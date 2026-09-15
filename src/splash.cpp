@@ -365,7 +365,7 @@ static void showRotatingDotsSplash() {
         gfx->setTextSize(1);
         gfx->setTextColor(cDim);
         gfx->setCursor((SCREEN_W - 48) / 2, SCREEN_H / 2 - 20);
-        gfx->print("v" FW_VERSION);
+        gfx->print(FW_VERSION);
 
         // Rotating dots (8 dots in a circle)
         for (int i = 0; i < 8; i++) {

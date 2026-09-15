@@ -33,6 +33,15 @@ void displayInit();
 void displaySetBacklight(uint8_t value); // 0-255
 void drawTopbar(int batteryPct, bool charging, bool sdOk);
 
+// Push only a changed rectangle to the physical panel. Full-width regions
+// are sent in one SPI transfer; narrower regions are sent row-by-row because
+// the canvas framebuffer has a SCREEN_W stride.
+void displayFlushRegion(int x, int y, int w, int h);
+
+// Pushes the complete framebuffer only when it differs from the last frame
+// already presented. This avoids wasting the SPI bus while the UI is idle.
+bool displayFlushIfChanged();
+
 // Raw access to the canvas's RGB565 framebuffer (row-major, stride ==
 // SCREEN_W, no padding - Arduino_Canvas allocates exactly w*h uint16_t's).
 // Used by cursor.cpp to save/restore the small rectangle of pixels under the

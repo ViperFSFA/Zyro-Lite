@@ -29,6 +29,7 @@ enum Mode {
     MODE_CAPTURE_SAVEAS,
     MODE_CAPTURE_CONFIG,
     MODE_SAVED,
+    MODE_SAVED_INFO,
     MODE_FSK_RX,
     MODE_FSK_TX,
     MODE_FSK_MONITOR,
@@ -68,6 +69,24 @@ public:
 
 static SX1262Debug *radio = nullptr;
 static bool radioOk = false;
+static int16_t radioInitState = RADIOLIB_ERR_UNKNOWN;
+static volatile bool radioPacketReady = false;
+
+static void onRadioPacket() {
+    radioPacketReady = true;
+}
+
+static bool packetReady() {
+    if (!radioOk || !radio) return false;
+    return radioPacketReady || ((radio->getIrqStatus() & RADIOLIB_SX126X_IRQ_RX_DONE) != 0);
+}
+
+static int16_t armReceive() {
+    if (!radioOk || !radio) return RADIOLIB_ERR_UNKNOWN;
+    radioPacketReady = false;
+    radio->setPacketReceivedAction(onRadioPacket);
+    return radio->startReceive();
+}
 
 struct Band {
     const char *label;
@@ -85,6 +104,7 @@ static Band bands[4] = {
 // Scope data
 static float scopeSamples[50] = {0};
 static int scopeIdx = 0;
+static int scopeBandIdx = 2; // T-Deck Plus build is the 868 MHz variant
 static uint32_t lastSweepMs = 0;
 
 static uint16_t rssiToColor565(int8_t rssi) {
@@ -104,25 +124,37 @@ static uint16_t rssiToColor565(int8_t rssi) {
 }
 
 static void radioSetup() {
-    if (radioOk) return;
-    radioModule = new Module(RADIO_CS_PIN, RADIO_DIO1_PIN, RADIO_RST_PIN, RADIO_BUSY_PIN, *gSharedSPI);
-    radio = new SX1262Debug(radioModule);
+    if (!radioModule) {
+        radioModule = new Module(RADIO_CS_PIN, RADIO_DIO1_PIN, RADIO_RST_PIN, RADIO_BUSY_PIN, *gSharedSPI);
+        radio = new SX1262Debug(radioModule);
+    }
 
-    int state = radio->begin(433.92, 125.0, 7, 5, 0x12, 10, 8, 1.6, false);
-    radioOk = (state == RADIOLIB_ERR_NONE);
+    // Default to the fitted 868 MHz antenna rather than 433 MHz. Other
+    // frequencies remain available for receive-only inspection.
+    radioInitState = radio->begin(868.0, 125.0, 7, 5, 0x12, 10, 8, 1.6, false);
+    radioOk = (radioInitState == RADIOLIB_ERR_NONE);
+    if (radioOk) radio->setPacketReceivedAction(onRadioPacket);
 }
 
 static void doSweep() {
     if (!radioOk) return;
     for (int i = 0; i < 4; i++) {
-        radio->setFrequency(bands[i].freqMHz);
-        radio->startReceive();
+        int16_t state = radio->setFrequency(bands[i].freqMHz);
+        if (state != RADIOLIB_ERR_NONE) {
+            bands[i].rssi = -120.0f;
+            continue;
+        }
+        state = radio->startReceive();
+        if (state != RADIOLIB_ERR_NONE) {
+            bands[i].rssi = -120.0f;
+            continue;
+        }
         // Adequate dwell so ambient RSSI is a real reading, not noise.
         delay(25);
         bands[i].rssi = radio->getRSSI(false);
     }
 
-    scopeSamples[scopeIdx] = bands[1].rssi;
+    scopeSamples[scopeIdx] = bands[scopeBandIdx].rssi;
     scopeIdx = (scopeIdx + 1) % 50;
 }
 
@@ -173,7 +205,7 @@ static void drawScope() {
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
-    gfx->print("433.92 MHz RSSI Scope");
+    gfx->print(String(bands[scopeBandIdx].label) + " RSSI Scope");
 
     int gx = 20, gy = TOPBAR_HEIGHT + 25, gw = 280, gh = 140;
     gfx->drawRect(gx, gy, gw, gh, t.dim);
@@ -193,7 +225,7 @@ static void drawScope() {
 
     gfx->setTextColor(t.fg);
     gfx->setCursor(gx, gy + gh + 8);
-    gfx->print("Current RSSI: " + String((int)scopeSamples[(scopeIdx + 49) % 50]) + " dBm");
+    gfx->print("RSSI " + String((int)scopeSamples[(scopeIdx + 49) % 50]) + " dBm   L/R=band");
 }
 
 // --- Capture / Save ---
@@ -201,6 +233,14 @@ static void drawScope() {
 
 static std::vector<String> savedFiles;
 static int savedSel = 0;
+static int savedScrollTop = 0;
+static String savedInfoName;
+static String savedInfoPayload;
+static float savedInfoFreq = 0.0f;
+static int savedInfoRssi = -120;
+static int savedInfoPackets = 1;
+static size_t savedInfoBytes = 0;
+static bool savedInfoValid = false;
 
 static String bytesToHex(const uint8_t *data, size_t len) {
     String out;
@@ -271,7 +311,7 @@ static void captureSessionInit() {
     captureWaterfallReset();
     if (radioOk) {
         radio->setFrequency(bands[capActiveBandIdx()].freqMHz);
-        radio->startReceive();
+        armReceive();
     }
 }
 
@@ -283,39 +323,52 @@ static void captureStepBand() {
     }
 
     int bandIdx = capActiveBandIdx();
-    radio->setFrequency(bands[bandIdx].freqMHz);
-    radio->startReceive();
-    // Dwell long enough for a real packet to arrive. Must match CAP_STEP_MS
-    // cadence so we're not just sampling the first few ms then switching away.
-    // 50ms is enough for the chip to settle and capture a real preamble.
-    delay(50);
-
-    uint8_t buf[64];
-    int state = radio->readData(buf, sizeof(buf));
-    if (state == RADIOLIB_ERR_NONE) {
+    // The receiver has been listening on this band for the complete dwell
+    // interval. Only read the FIFO after the SX1262 raises RX_DONE; calling
+    // readData() unconditionally can interpret an idle/stale FIFO as a hit.
+    if (packetReady()) {
+        uint8_t buf[64];
         size_t len = radio->getPacketLength();
         if (len > sizeof(buf)) len = sizeof(buf);
-        float rssi = radio->getRSSI();
-        // Basic sanity: only record signals clearly above the noise floor.
-        // The SX1262 noise floor is typically around -120 dBm; require at
-        // least -100 dBm so random ADC noise doesn't become a "capture".
-        if ((int)rssi > -100) {
-            FoundCapture fc;
-            fc.freqMhz = bands[bandIdx].freqMHz;
-            fc.rssi = (int8_t)constrain((int)rssi, -120, -30);
-            fc.hexLines = bytesToHex(buf, len) + "\n";
-            fc.packetCount = 1;
-            fc.saved = false;
-            foundList.push_back(fc);
-            audioClickOk();
+        int state = radio->readData(buf, len);
+        radioPacketReady = false;
+        if (state == RADIOLIB_ERR_NONE && len > 0) {
+            float rssi = radio->getRSSI();
+            if ((int)rssi > -110) {
+                String payload = bytesToHex(buf, len) + "\n";
+                bool merged = false;
+                // Repeated packets are more useful as a count than dozens of
+                // identical list rows. Keep unique payloads separate.
+                for (int i = (int)foundList.size() - 1; i >= 0; i--) {
+                    FoundCapture &existing = foundList[i];
+                    if (existing.freqMhz == bands[bandIdx].freqMHz && existing.hexLines == payload) {
+                        existing.packetCount++;
+                        existing.rssi = (int8_t)constrain((int)rssi, -120, -30);
+                        merged = true;
+                        break;
+                    }
+                }
+                if (!merged) {
+                    FoundCapture fc;
+                    fc.freqMhz = bands[bandIdx].freqMHz;
+                    fc.rssi = (int8_t)constrain((int)rssi, -120, -30);
+                    fc.hexLines = payload;
+                    fc.packetCount = 1;
+                    fc.saved = false;
+                    foundList.push_back(fc);
+                    foundSel = (int)foundList.size() - 1;
+                    audioClickOk();
+                }
+            }
         }
-        radio->startReceive();
     }
 
     float ambient = radio->getRSSI(false);
     capWaterfall[0][bandIdx] = (int8_t)constrain((int)ambient, -120, -30);
 
     if (capBandFixed < 0) capBandIdx = (capBandIdx + 1) % 4;
+    radio->setFrequency(bands[capActiveBandIdx()].freqMHz);
+    armReceive();
 }
 
 static void captureSaveEntry(int idx, const String &customName) {
@@ -327,10 +380,17 @@ static void captureSaveEntry(int idx, const String &customName) {
     } else {
         snprintf(path, sizeof(path), CAPTURE_DIR "/capture_%lu.rfcap", (unsigned long)millis());
     }
+    // Arduino SD's FILE_WRITE appends. Replace an existing named capture so
+    // every .rfcap remains one valid, inspectable record.
+    if (SD.exists(path)) SD.remove(path);
     File f = SD.open(path, FILE_WRITE);
     if (f) {
-        f.print("freq=" + String(foundList[idx].freqMhz, 2) + "\n");
-        f.print(foundList[idx].hexLines);
+        f.println("freq=" + String(foundList[idx].freqMhz, 3));
+        f.println("rssi=" + String((int)foundList[idx].rssi));
+        f.println("packets=" + String(foundList[idx].packetCount));
+        String payload = foundList[idx].hexLines;
+        payload.trim();
+        f.println("hex=" + payload);
         f.close();
         foundList[idx].saved = true;
     }
@@ -346,14 +406,50 @@ static void captureDeleteEntry(int idx) {
 static void refreshSavedList() {
     savedFiles.clear();
     savedSel = 0;
+    savedScrollTop = 0;
     File dir = SD.open(CAPTURE_DIR);
     if (!dir || !dir.isDirectory()) return;
     File entry = dir.openNextFile();
     while (entry) {
-        if (!entry.isDirectory()) savedFiles.push_back(String(entry.name()));
+        if (!entry.isDirectory()) {
+            String name = String(entry.name());
+            if (name.endsWith(".rfcap")) savedFiles.push_back(name);
+        }
         entry = dir.openNextFile();
     }
     dir.close();
+}
+
+static void loadSavedInfo() {
+    savedInfoValid = false;
+    savedInfoPayload = "";
+    savedInfoFreq = 0.0f;
+    savedInfoRssi = -120;
+    savedInfoPackets = 1;
+    savedInfoBytes = 0;
+    if (savedSel < 0 || savedSel >= (int)savedFiles.size()) return;
+
+    savedInfoName = savedFiles[savedSel];
+    File f = SD.open(String(CAPTURE_DIR) + "/" + savedInfoName, FILE_READ);
+    if (!f) return;
+    savedInfoBytes = f.size();
+    while (f.available() && savedInfoPayload.length() < 256) {
+        String line = f.readStringUntil('\n');
+        line.trim();
+        if (line.startsWith("freq=")) savedInfoFreq = line.substring(5).toFloat();
+        else if (line.startsWith("rssi=")) savedInfoRssi = line.substring(5).toInt();
+        else if (line.startsWith("packets=")) savedInfoPackets = max(1L, line.substring(8).toInt());
+        else {
+            if (line.startsWith("hex=")) line = line.substring(4);
+            // Also accepts V1.0 captures where the payload was a bare line.
+            for (size_t i = 0; i < line.length() && savedInfoPayload.length() < 256; i++) {
+                char c = line[i];
+                if (isxdigit((unsigned char)c)) savedInfoPayload += (char)toupper((unsigned char)c);
+            }
+        }
+    }
+    f.close();
+    savedInfoValid = savedInfoFreq > 0.0f && savedInfoPayload.length() >= 2;
 }
 
 static const int CAP_LIST_W = (int)(SCREEN_W * 0.62f);
@@ -512,9 +608,14 @@ static void drawSaved() {
     gfx->setCursor(8, TOPBAR_HEIGHT + 18);
     gfx->print("OK=view info  BACK=return");
 
-    for (size_t i = 0; i < savedFiles.size(); i++) {
-        int y = TOPBAR_HEIGHT + 34 + i * 18;
-        bool hi = ((int)i == savedSel);
+    int visibleRows = max(1, (SCREEN_H - TOPBAR_HEIGHT - 38) / 18);
+    if (savedSel < savedScrollTop) savedScrollTop = savedSel;
+    if (savedSel >= savedScrollTop + visibleRows) savedScrollTop = savedSel - visibleRows + 1;
+    for (int row = 0; row < visibleRows; row++) {
+        int i = savedScrollTop + row;
+        if (i >= (int)savedFiles.size()) break;
+        int y = TOPBAR_HEIGHT + 34 + row * 18;
+        bool hi = (i == savedSel);
         if (hi) gfx->fillRect(4, y - 2, SCREEN_W - 8, 16, t.accent);
         gfx->setTextColor(hi ? t.accentFg : t.fg);
         gfx->setCursor(8, y);
@@ -522,8 +623,54 @@ static void drawSaved() {
     }
 }
 
+static void drawSavedInfo() {
+    const Theme &t = gSettings.theme();
+    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    gfx->setTextSize(1);
+    gfx->setTextColor(t.accent);
+    gfx->setCursor(8, TOPBAR_HEIGHT + 4);
+    gfx->print("Saved Capture");
+
+    if (!savedInfoValid) {
+        gfx->setTextColor(t.bad);
+        gfx->setCursor(8, TOPBAR_HEIGHT + 28);
+        gfx->print("Invalid or unreadable capture file");
+        return;
+    }
+
+    gfx->setTextColor(t.fg);
+    gfx->setCursor(8, TOPBAR_HEIGHT + 26);
+    gfx->print("File: " + savedInfoName.substring(0, 38));
+    gfx->setCursor(8, TOPBAR_HEIGHT + 46);
+    gfx->print("Frequency: " + String(savedInfoFreq, 3) + " MHz");
+    gfx->setCursor(8, TOPBAR_HEIGHT + 66);
+    gfx->print("Payload: " + String(savedInfoPayload.length() / 2) + " bytes");
+    gfx->setCursor(8, TOPBAR_HEIGHT + 86);
+    gfx->print("RSSI: " + String(savedInfoRssi) + " dBm  Seen: " + String(savedInfoPackets));
+    gfx->setCursor(8, TOPBAR_HEIGHT + 106);
+    gfx->print("File size: " + String(savedInfoBytes) + " bytes");
+
+    gfx->setTextColor(t.dim);
+    gfx->setCursor(8, TOPBAR_HEIGHT + 128);
+    gfx->print("Hex preview:");
+    gfx->setTextColor(t.ok);
+    gfx->setCursor(8, TOPBAR_HEIGHT + 144);
+    gfx->print(savedInfoPayload.substring(0, 44));
+    if (savedInfoPayload.length() > 44) {
+        gfx->setCursor(8, TOPBAR_HEIGHT + 160);
+        gfx->print(savedInfoPayload.substring(44, 88));
+    }
+
+    gfx->setTextColor(t.dim);
+    gfx->setCursor(8, SCREEN_H - 15);
+    gfx->print("BACK = saved captures");
+}
+
 // ===================== FSK Mode =====================
-static float fskFreqMHz = 433.92f;
+static const float FSK_FREQS[] = { 433.92f, 868.00f };
+static const int FSK_FREQ_COUNT = sizeof(FSK_FREQS) / sizeof(FSK_FREQS[0]);
+static int fskFreqIdx = 1;
+static float fskFreqMHz = FSK_FREQS[1];
 static const float FSK_BIT_RATE_KBPS = 4.8f;
 static const float FSK_FREQ_DEV_KHZ = 5.0f;
 static const float FSK_RX_BW_KHZ = 156.2f;
@@ -533,12 +680,25 @@ static void enterFskMode() {
     if (!radioOk) return;
     int state = radio->beginFSK(fskFreqMHz, FSK_BIT_RATE_KBPS, FSK_FREQ_DEV_KHZ, FSK_RX_BW_KHZ, 10, 16, 1.6, false);
     fskActive = (state == RADIOLIB_ERR_NONE);
+    if (fskActive) radio->setPacketReceivedAction(onRadioPacket);
 }
 
 static void exitFskMode() {
-    if (!radioOk || !fskActive) return;
-    radio->begin(433.92, 125.0, 7, 5, 0x12, 10, 8, 1.6, false);
+    if (!radioOk || !radio) return;
+    int state = radio->begin(868.0, 125.0, 7, 5, 0x12, 10, 8, 1.6, false);
+    radioInitState = state;
+    radioOk = (state == RADIOLIB_ERR_NONE);
+    if (radioOk) radio->setPacketReceivedAction(onRadioPacket);
     fskActive = false;
+}
+
+static void changeFskFrequency(int direction, bool resumeRx) {
+    if (!radioOk) return;
+    fskFreqIdx = (fskFreqIdx + direction + FSK_FREQ_COUNT) % FSK_FREQ_COUNT;
+    fskFreqMHz = FSK_FREQS[fskFreqIdx];
+    radio->standby();
+    enterFskMode();
+    if (fskActive && resumeRx) armReceive();
 }
 
 // --- FSK Receiver ---
@@ -572,22 +732,26 @@ static void drawFskRx() {
     gfx->setCursor(8, TOPBAR_HEIGHT + 85);
     gfx->setTextColor(t.ok);
     gfx->print(fskLastPayloadHex.substring(0, 40));
+    gfx->setTextColor(t.dim);
+    gfx->setCursor(8, SCREEN_H - 15);
+    gfx->print("L/R=frequency  BACK=menu");
 }
 
 static void pollFskRx() {
-    if (!radioOk || !fskActive) return;
+    if (!radioOk || !fskActive || !packetReady()) return;
     uint8_t buf[64];
-    int state = radio->readData(buf, sizeof(buf));
+    size_t plen = radio->getPacketLength();
+    if (plen > sizeof(buf)) plen = sizeof(buf);
+    int state = radio->readData(buf, plen);
+    radioPacketReady = false;
     if (state == RADIOLIB_ERR_NONE) {
-        size_t plen = radio->getPacketLength();
-        if (plen > sizeof(buf)) plen = sizeof(buf);
         fskRxCount++;
         fskLastRssi = radio->getRSSI();
         fskLastPayloadHex = bytesToHex(buf, plen);
         audioClickOk();
         drawFskRx();
-        radio->startReceive();
     }
+    armReceive();
 }
 
 // --- FSK TX Test ---
@@ -600,7 +764,7 @@ static void sendFskTestPacket() {
     String pkt = "FSKTEST " + String(fskTxCount);
     int st = radio->transmit(pkt.c_str());
     fskTxStatus = (st == RADIOLIB_ERR_NONE) ? ("TX OK (" + pkt + ")") : ("TX Error (" + String(st) + ")");
-    radio->startReceive();
+    armReceive();
 }
 
 static void drawFskTx() {
@@ -620,7 +784,7 @@ static void drawFskTx() {
 
     gfx->setTextColor(t.dim);
     gfx->setCursor(8, TOPBAR_HEIGHT + 20);
-    gfx->print("OK = send test packet");
+    gfx->print("OK=send  L/R=frequency");
 
     gfx->setTextColor(t.fg);
     gfx->setCursor(8, TOPBAR_HEIGHT + 34);
@@ -656,6 +820,8 @@ static void drawFskMonitor() {
         gfx->setTextColor(t.dim);
         gfx->setCursor(8, TOPBAR_HEIGHT + 26);
         gfx->print("Listening...");
+        gfx->setCursor(8, SCREEN_H - 15);
+        gfx->print("L/R=frequency  BACK=menu");
         return;
     }
 
@@ -668,15 +834,19 @@ static void drawFskMonitor() {
         gfx->print(line);
         y += 16;
     }
+    gfx->setTextColor(t.dim);
+    gfx->setCursor(8, SCREEN_H - 15);
+    gfx->print("L/R=frequency  BACK=menu");
 }
 
 static void pollFskMonitor() {
-    if (!radioOk || !fskActive) return;
+    if (!radioOk || !fskActive || !packetReady()) return;
     uint8_t buf[64];
-    int state = radio->readData(buf, sizeof(buf));
+    size_t plen = radio->getPacketLength();
+    if (plen > sizeof(buf)) plen = sizeof(buf);
+    int state = radio->readData(buf, plen);
+    radioPacketReady = false;
     if (state == RADIOLIB_ERR_NONE) {
-        size_t plen = radio->getPacketLength();
-        if (plen > sizeof(buf)) plen = sizeof(buf);
         FskLogEntry e;
         e.hex = bytesToHex(buf, plen);
         e.rssi = radio->getRSSI();
@@ -684,45 +854,75 @@ static void pollFskMonitor() {
         if (fskMonitorLog.size() > FSK_LOG_MAX) fskMonitorLog.erase(fskMonitorLog.begin());
         audioClickOk();
         drawFskMonitor();
-        radio->startReceive();
     }
+    armReceive();
 }
 
 // --- FSK BER Test ---
-static const uint8_t BER_PATTERN_BYTE = 0x55;
 static const size_t BER_PACKET_LEN = 32;
+static void drawFskBer();
 static uint32_t berPacketsTx = 0;
 static uint32_t berPacketsRx = 0;
+static uint32_t berPacketsLost = 0;
+static uint32_t berRejected = 0;
 static uint32_t berBitErrors = 0;
 static uint32_t berBitsTotal = 0;
+static uint16_t berTxSequence = 0;
+static uint16_t berLastRxSequence = 0;
+static bool berHaveRxSequence = false;
+
+static void buildBerPacket(uint8_t *pkt, uint16_t sequence) {
+    pkt[0] = 'Z'; pkt[1] = 'Y'; pkt[2] = 'R'; pkt[3] = 'O';
+    pkt[4] = (uint8_t)(sequence >> 8);
+    pkt[5] = (uint8_t)(sequence & 0xFF);
+    for (size_t i = 6; i < BER_PACKET_LEN; i++) {
+        pkt[i] = (uint8_t)(0x55 ^ (uint8_t)i ^ (uint8_t)sequence);
+    }
+}
 
 static void sendBerPacket() {
     if (!radioOk || !fskActive) return;
     uint8_t pkt[BER_PACKET_LEN];
-    memset(pkt, BER_PATTERN_BYTE, BER_PACKET_LEN);
-    radio->transmit(pkt, BER_PACKET_LEN);
-    berPacketsTx++;
-    radio->startReceive();
+    buildBerPacket(pkt, berTxSequence++);
+    int16_t state = radio->transmit(pkt, BER_PACKET_LEN);
+    if (state == RADIOLIB_ERR_NONE) berPacketsTx++;
+    armReceive();
 }
 
 static void pollBer() {
-    if (!radioOk || !fskActive) return;
+    if (!radioOk || !fskActive || !packetReady()) return;
     uint8_t buf[BER_PACKET_LEN];
-    int state = radio->readData(buf, sizeof(buf));
+    size_t plen = radio->getPacketLength();
+    if (plen > sizeof(buf)) plen = sizeof(buf);
+    int state = radio->readData(buf, plen);
+    radioPacketReady = false;
     if (state == RADIOLIB_ERR_NONE) {
-        size_t plen = radio->getPacketLength();
-        if (plen > sizeof(buf)) plen = sizeof(buf);
-        berPacketsRx++;
-        for (size_t i = 0; i < plen; i++) {
-            uint8_t diff = buf[i] ^ BER_PATTERN_BYTE;
-            while (diff) {
-                berBitErrors += (diff & 1);
-                diff >>= 1;
+        if (plen == BER_PACKET_LEN && buf[0] == 'Z' && buf[1] == 'Y' && buf[2] == 'R' && buf[3] == 'O') {
+            uint16_t sequence = ((uint16_t)buf[4] << 8) | buf[5];
+            uint8_t expected[BER_PACKET_LEN];
+            buildBerPacket(expected, sequence);
+            berPacketsRx++;
+            if (berHaveRxSequence) {
+                uint16_t gap = sequence - berLastRxSequence;
+                if (gap > 1 && gap < 0x8000) berPacketsLost += gap - 1;
             }
+            berLastRxSequence = sequence;
+            berHaveRxSequence = true;
+
+            for (size_t i = 0; i < BER_PACKET_LEN; i++) {
+                uint8_t diff = buf[i] ^ expected[i];
+                while (diff) {
+                    berBitErrors += (diff & 1);
+                    diff >>= 1;
+                }
+            }
+            berBitsTotal += BER_PACKET_LEN * 8;
+            drawFskBer();
+        } else {
+            berRejected++;
         }
-        berBitsTotal += plen * 8;
-        radio->startReceive();
     }
+    armReceive();
 }
 
 static void drawFskBer() {
@@ -742,11 +942,11 @@ static void drawFskBer() {
 
     gfx->setTextColor(t.dim);
     gfx->setCursor(8, TOPBAR_HEIGHT + 20);
-    gfx->print("OK = send test packet");
+    gfx->print("OK=send  L/R=frequency");
 
     gfx->setTextColor(t.fg);
     gfx->setCursor(8, TOPBAR_HEIGHT + 30);
-    gfx->print("Sent: " + String(berPacketsTx) + "  Rx: " + String(berPacketsRx));
+    gfx->print("TX " + String(berPacketsTx) + "  RX " + String(berPacketsRx) + "  Lost " + String(berPacketsLost));
     gfx->setCursor(8, TOPBAR_HEIGHT + 52);
     gfx->print("Bit errors: " + String(berBitErrors) + " / " + String(berBitsTotal));
 
@@ -762,7 +962,9 @@ static void drawFskBer() {
 
     gfx->setTextColor(t.dim);
     gfx->setCursor(8, TOPBAR_HEIGHT + 100);
-    gfx->print("Needs a 2nd device on this screen");
+    gfx->print("Other packets ignored: " + String(berRejected));
+    gfx->setCursor(8, TOPBAR_HEIGHT + 116);
+    gfx->print("Needs a 2nd Zyro device on this screen");
 }
 
 // ===================== Info =====================
@@ -778,7 +980,10 @@ static void drawInfoStatus() {
     if (!radioOk) {
         gfx->setTextColor(t.bad);
         gfx->setCursor(8, TOPBAR_HEIGHT + 24);
-        gfx->print("SX1262 Radio Init Failed!");
+        gfx->print("SX1262 init failed: " + String(radioInitState));
+        gfx->setTextColor(t.dim);
+        gfx->setCursor(8, TOPBAR_HEIGHT + 44);
+        gfx->print("OK = retry radio initialization");
         return;
     }
 
@@ -794,6 +999,10 @@ static void drawInfoStatus() {
 
     snprintf(hexbuf, sizeof(hexbuf), "0x%04X", radio->chipErrors());
     gfx->setCursor(8, y); gfx->print(String("Errors  : ") + hexbuf); y += 18;
+
+    gfx->setTextColor(t.dim);
+    gfx->setCursor(8, SCREEN_H - 15);
+    gfx->print("OK = run radio init check again");
 }
 
 static void drawInfoChip() {
@@ -860,9 +1069,18 @@ static void drawInfoRegdump() {
     }
 }
 
-// --- Frequency sweep + waterfall (433.000-434.790 MHz) ---
-static const float SWEEP_FREQ_START = 433.000f;
-static const float SWEEP_FREQ_END = 434.790f;
+// --- Frequency sweep + waterfall ---
+struct SweepProfile {
+    const char *label;
+    float startMHz;
+    float endMHz;
+};
+static const SweepProfile SWEEP_PROFILES[] = {
+    { "433 ISM", 433.050f, 434.790f },
+    { "868 ISM", 863.000f, 870.000f },
+};
+static const int SWEEP_PROFILE_COUNT = sizeof(SWEEP_PROFILES) / sizeof(SWEEP_PROFILES[0]);
+static int sweepProfileIdx = 1;
 static const int SWEEP_STEPS = 64;
 static const int WATERFALL_ROWS = 22;
 #define SWEEP_DIR "/rf_scans"
@@ -875,10 +1093,11 @@ static bool infoSweepInited = false;
 static String sweepSaveMsg;
 static uint32_t sweepSaveMsgUntil = 0;
 
-static void sweepInit() {
-    if (!infoSweepInited) {
+static void sweepInit(bool reset = false) {
+    if (!infoSweepInited || reset) {
+        const SweepProfile &profile = SWEEP_PROFILES[sweepProfileIdx];
         for (int i = 0; i < SWEEP_STEPS; i++) {
-            sweepFreqs[i] = SWEEP_FREQ_START + (SWEEP_FREQ_END - SWEEP_FREQ_START) * i / (SWEEP_STEPS - 1);
+            sweepFreqs[i] = profile.startMHz + (profile.endMHz - profile.startMHz) * i / (SWEEP_STEPS - 1);
             latestSweepRssi[i] = -120.0f;
         }
         for (int r = 0; r < WATERFALL_ROWS; r++)
@@ -895,8 +1114,16 @@ static void doInfoSweepStep() {
     }
 
     for (int i = 0; i < SWEEP_STEPS; i++) {
-        radio->setFrequency(sweepFreqs[i]);
-        radio->startReceive();
+        if (radio->setFrequency(sweepFreqs[i]) != RADIOLIB_ERR_NONE) {
+            latestSweepRssi[i] = -120.0f;
+            waterfall[0][i] = -120;
+            continue;
+        }
+        if (radio->startReceive() != RADIOLIB_ERR_NONE) {
+            latestSweepRssi[i] = -120.0f;
+            waterfall[0][i] = -120;
+            continue;
+        }
         delayMicroseconds(600);
         float r = radio->getRSSI(false);
         latestSweepRssi[i] = r;
@@ -935,7 +1162,7 @@ static void drawInfoSweep() {
         gfx->setTextColor(t.ok);
         gfx->print(sweepSaveMsg);
     } else {
-        gfx->print(String(SWEEP_FREQ_START, 3) + "-" + String(SWEEP_FREQ_END, 3) + "MHz waterfall (OK=save)");
+        gfx->print(String(SWEEP_PROFILES[sweepProfileIdx].label) + " waterfall  L/R=band  OK=save");
     }
 
     if (!radioOk) {
@@ -998,14 +1225,27 @@ static void closeCaptureConfigMenu() {
     if (captureConfigMenu) { delete captureConfigMenu; captureConfigMenu = nullptr; }
 }
 
+static void selectCaptureBand(int bandIndex) {
+    capBandFixed = bandIndex;
+    if (capBandFixed < -1 || capBandFixed >= 4) capBandFixed = -1;
+    if (capBandFixed < 0) capBandIdx = 0;
+    lastCapStepMs = millis();
+    if (radioOk) {
+        radio->setFrequency(bands[capActiveBandIdx()].freqMHz);
+        armReceive();
+    }
+    currentMode = MODE_CAPTURE;
+    drawCapture();
+}
+
 static void openCaptureConfigMenu() {
     closeCaptureConfigMenu();
     std::vector<MenuItem> items = {
-        { "Auto (cycle all bands)", ">", [](){ capBandFixed = -1; currentMode = MODE_CAPTURE; drawCapture(); } },
-        { bands[0].label,           ">", [](){ capBandFixed = 0;  currentMode = MODE_CAPTURE; drawCapture(); } },
-        { bands[1].label,           ">", [](){ capBandFixed = 1;  currentMode = MODE_CAPTURE; drawCapture(); } },
-        { bands[2].label,           ">", [](){ capBandFixed = 2;  currentMode = MODE_CAPTURE; drawCapture(); } },
-        { bands[3].label,           ">", [](){ capBandFixed = 3;  currentMode = MODE_CAPTURE; drawCapture(); } },
+        { "Auto (cycle all bands)", ">", [](){ selectCaptureBand(-1); } },
+        { bands[0].label,           ">", [](){ selectCaptureBand(0); } },
+        { bands[1].label,           ">", [](){ selectCaptureBand(1); } },
+        { bands[2].label,           ">", [](){ selectCaptureBand(2); } },
+        { bands[3].label,           ">", [](){ selectCaptureBand(3); } },
     };
     captureConfigMenu = new Menu("Configure Scan", items);
     currentMode = MODE_CAPTURE_CONFIG;
@@ -1023,8 +1263,8 @@ static void init() {
     if (topMenu) delete topMenu;
     std::vector<MenuItem> items = {
         { "Sub-GHz Band Sweep",  ">", [](){ currentMode = MODE_SWEEP; doSweep(); drawSweep(); } },
-        { "433MHz Signal Scope", ">", [](){ currentMode = MODE_SCOPE; doSweep(); drawScope(); } },
-        { "Scan & Capture",      ">", [](){ currentMode = MODE_CAPTURE; captureSessionInit(); drawCapture(); } },
+        { "Live Signal Scope",   ">", [](){ currentMode = MODE_SCOPE; doSweep(); drawScope(); } },
+        { "LoRa Packet Capture", ">", [](){ currentMode = MODE_CAPTURE; captureSessionInit(); drawCapture(); } },
         { "Saved Captures",      ">", [](){ currentMode = MODE_SAVED; refreshSavedList(); drawSaved(); } },
         { "FSK Mode",            ">", [](){ menuLevel = LEVEL_FSK; if (fskMenu) { fskMenu->forceRedraw(); fskMenu->draw(); } } },
         { "Info",                ">", [](){ menuLevel = LEVEL_INFO; if (infoMenu) { infoMenu->forceRedraw(); infoMenu->draw(); } } },
@@ -1035,7 +1275,7 @@ static void init() {
     std::vector<MenuItem> fskItems = {
         { "FSK Receiver",   ">", [](){
               enterFskMode(); currentMode = MODE_FSK_RX; fskRxCount = 0;
-              if (fskActive) radio->startReceive();
+              if (fskActive) armReceive();
               drawFskRx();
           } },
         { "FSK TX Test",    ">", [](){
@@ -1044,13 +1284,16 @@ static void init() {
           } },
         { "Packet Monitor", ">", [](){
               enterFskMode(); currentMode = MODE_FSK_MONITOR; fskMonitorLog.clear();
-              if (fskActive) radio->startReceive();
+              if (fskActive) armReceive();
               drawFskMonitor();
           } },
         { "BER Test",       ">", [](){
               enterFskMode(); currentMode = MODE_FSK_BER;
-              berPacketsTx = berPacketsRx = berBitErrors = berBitsTotal = 0;
-              if (fskActive) radio->startReceive();
+              berPacketsTx = berPacketsRx = berPacketsLost = berRejected = 0;
+              berBitErrors = berBitsTotal = 0;
+              berTxSequence = berLastRxSequence = 0;
+              berHaveRxSequence = false;
+              if (fskActive) armReceive();
               drawFskBer();
           } },
     };
@@ -1061,7 +1304,7 @@ static void init() {
         { "Radio Status",    ">", [](){ currentMode = MODE_INFO_STATUS; drawInfoStatus(); } },
         { "SX1262 Info",     ">", [](){ currentMode = MODE_INFO_CHIP; drawInfoChip(); } },
         { "Register Dump",   ">", [](){ currentMode = MODE_INFO_REGDUMP; drawInfoRegdump(); } },
-        { "Frequency Sweep", ">", [](){ currentMode = MODE_INFO_SWEEP; sweepInit(); drawInfoSweep(); } },
+        { "Frequency Sweep", ">", [](){ currentMode = MODE_INFO_SWEEP; sweepInit(true); drawInfoSweep(); } },
     };
     infoMenu = new Menu("Radio Info", infoItems);
 
@@ -1134,7 +1377,13 @@ static void handleInput(const InputResult &in) {
             String name = capSaveAsBuf;
             name.trim();
             if (name.length() == 0) name = "capture_" + String((unsigned long)millis());
-            captureSaveEntry(captureActionTarget, name);
+            String safeName;
+            for (size_t i = 0; i < name.length() && safeName.length() < 32; i++) {
+                char c = name[i];
+                if (isalnum((unsigned char)c) || c == '_' || c == '-') safeName += c;
+            }
+            if (safeName.length() == 0) safeName = "capture_" + String((unsigned long)millis());
+            captureSaveEntry(captureActionTarget, safeName);
             currentMode = MODE_CAPTURE;
             drawCapture();
             return;
@@ -1188,6 +1437,13 @@ static void handleInput(const InputResult &in) {
             currentMode = MODE_CAPTURE;
             audioClickBack();
             drawCapture();
+            return;
+        }
+
+        if (currentMode == MODE_SAVED_INFO) {
+            currentMode = MODE_SAVED;
+            audioClickBack();
+            drawSaved();
             return;
         }
 
@@ -1269,8 +1525,30 @@ static void handleInput(const InputResult &in) {
             savedSel = (savedSel + 1) % (int)savedFiles.size();
             audioClickNav(); drawSaved();
         }
-        // OK on saved captures: no replay on T-Deck. Just a nav action, no-op for now.
+        else if (in.type == InputEvent::OK) {
+            audioClickOk();
+            loadSavedInfo();
+            currentMode = MODE_SAVED_INFO;
+            drawSavedInfo();
+        }
         return;
+    }
+
+    if (currentMode == MODE_SAVED_INFO) return;
+
+    if (currentMode == MODE_FSK_RX || currentMode == MODE_FSK_TX ||
+        currentMode == MODE_FSK_MONITOR || currentMode == MODE_FSK_BER) {
+        if (in.type == InputEvent::NAV_LEFT || in.type == InputEvent::NAV_RIGHT) {
+            int direction = (in.type == InputEvent::NAV_RIGHT) ? 1 : -1;
+            bool resumeRx = currentMode != MODE_FSK_TX;
+            changeFskFrequency(direction, resumeRx);
+            audioClickNav();
+            if (currentMode == MODE_FSK_RX) drawFskRx();
+            else if (currentMode == MODE_FSK_TX) drawFskTx();
+            else if (currentMode == MODE_FSK_MONITOR) drawFskMonitor();
+            else drawFskBer();
+            return;
+        }
     }
 
     if (currentMode == MODE_FSK_TX) {
@@ -1292,7 +1570,14 @@ static void handleInput(const InputResult &in) {
     }
 
     if (currentMode == MODE_INFO_SWEEP) {
-        if (in.type == InputEvent::OK) {
+        if (in.type == InputEvent::NAV_LEFT || in.type == InputEvent::NAV_RIGHT) {
+            int direction = (in.type == InputEvent::NAV_RIGHT) ? 1 : -1;
+            sweepProfileIdx = (sweepProfileIdx + direction + SWEEP_PROFILE_COUNT) % SWEEP_PROFILE_COUNT;
+            sweepInit(true);
+            audioClickNav();
+            doInfoSweepStep();
+            drawInfoSweep();
+        } else if (in.type == InputEvent::OK) {
             audioClickOk();
             saveInfoSweepScan();
             drawInfoSweep();
@@ -1300,7 +1585,27 @@ static void handleInput(const InputResult &in) {
         return;
     }
 
-    if (in.type == InputEvent::OK) {
+    if (currentMode == MODE_FSK_RX || currentMode == MODE_FSK_MONITOR) return;
+
+    if (currentMode == MODE_INFO_STATUS && in.type == InputEvent::OK) {
+        audioClickOk();
+        radioSetup();
+        drawInfoStatus();
+        return;
+    }
+
+    if (currentMode == MODE_SCOPE && (in.type == InputEvent::NAV_LEFT || in.type == InputEvent::NAV_RIGHT)) {
+        int direction = (in.type == InputEvent::NAV_RIGHT) ? 1 : -1;
+        scopeBandIdx = (scopeBandIdx + direction + 4) % 4;
+        for (int i = 0; i < 50; i++) scopeSamples[i] = -120.0f;
+        scopeIdx = 0;
+        audioClickNav();
+        doSweep();
+        drawScope();
+        return;
+    }
+
+    if ((currentMode == MODE_SWEEP || currentMode == MODE_SCOPE) && in.type == InputEvent::OK) {
         audioClickOk();
         doSweep();
         if (currentMode == MODE_SWEEP) drawSweep();
@@ -1317,6 +1622,8 @@ static void onExit() {
     closeCaptureConfigMenu();
     if (fskActive) exitFskMode();
     if (radioOk && radio) {
+        radio->clearPacketReceivedAction();
+        radioPacketReady = false;
         radio->standby();
     }
     if (topMenu) { delete topMenu; topMenu = nullptr; }

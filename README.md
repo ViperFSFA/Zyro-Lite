@@ -11,13 +11,13 @@
 > * Issues and bug reports are welcome if they provide useful information.
 > * Please do not fork this project with the intention of submitting changes back to this repository.
 
-## Current Feature Status (Zyro-Lite V1.0)
+## Current Feature Status (Zyro-Lite V1.2)
 
 | Feature                    |       Status       | Notes                                                                                                                    |
 | -------------------------- | :----------------: | ------------------------------------------------------------------------------------------------------------------------ |
 | Wi-Fi                      |    ✅ Functional    | AP scanning, connect/disconnect, spectrum view, a signal monitor that reads the actual connected network, and a real (promiscuous-mode, not simulated) packet monitor.                                                 |
 | BLE (Bluetooth Low Energy)  |    ✅ Functional    | The scan crash (caused by fully reinitialising the BLE stack on every scan) is fixed. The stack now comes up once per session and scans asynchronously, with safe teardown on exit.                                    |
-| RF (Sub-GHz)                |    ✅ Functional    | Sub-GHz sweep, 433MHz scope, scan & capture (with saved captures), FSK mode (RX/TX/monitor/BER), and radio info/diagnostics. Note: replay is not supported on this hardware (SX1262 is not a raw sub-GHz OOK/ASK chip). |
+| RF (Sub-GHz)                |    ✅ Functional    | Multi-band RSSI sweep, selectable live scope, IRQ-driven LoRa packet capture with inspectable saved captures, selectable 433/868MHz FSK tools (RX/TX/monitor/sequence-aware BER), and 433/868MHz waterfall scans. Replay is not supported because the SX1262 is not a raw OOK/ASK transceiver. |
 | LoRa                        |    ✅ Functional    | Receiver monitor, ping sender, and a broadcast text chat (username + selectable frequency, keyboard input). Not wire-compatible with real Meshtastic devices. different packet format, no encryption. it only talks to other devices running this firmware. |
 | GPS                          |    ✅ Functional    | Status/fix screen, coordinate tracker (speed/distance), heading/compass, and a track logger that writes CSV to SD.        |
 | Ethernet                    |  🧪 Experimental   | USB-C CDC-ECM adapter status and a network ping test. Marked experimental in the app itself. Hasn't had a full hardware test pass.                                                                                      |

@@ -31,15 +31,16 @@ static uint32_t lastActivityMs = 0;
 
 // The canvas (see display.cpp) doesn't show anything on the physical panel
 // until flushed - flush() is a full 320x240x16bpp SPI burst (~150KB), so
-// this is throttled to a sane cap (~60fps) rather than firing on every
-// loop() iteration (which runs essentially unthrottled, every ~2ms). Any
+// this is throttled rather than firing on every loop() iteration (which runs
+// essentially unthrottled, every ~2ms). Small region animations can update
+// much faster than a full-frame SPI transfer. Any
 // draws that happened since the last flush are still shown, just batched
 // together into the next flush instead of each getting its own SPI burst -
 // which is the whole point: only ever-complete frames reach the screen.
 static void flushDisplay() {
-    if (millis() - lastFlushMs < 16) return;
+    if (millis() - lastFlushMs < ANIM_FRAME_MS) return;
     lastFlushMs = millis();
-    gfx->flush();
+    displayFlushIfChanged();
 }
 
 static void handleScreenTimeout() {
@@ -168,6 +169,7 @@ void setup() {
     zappCheckCrashGuard();
 
     rootMenuInit();
+    drawTopbar(batteryPercent(), batteryCharging(), sdOk);
     
     // Clear any input events that happened during boot/splash screen
     // (e.g. from holding the boot button to flash the firmware).
@@ -246,16 +248,25 @@ void loop() {
         rootMenuTick();
     }
 
-    // Topbar refresh (battery / SD / Wi-Fi icon)
-    if (millis() - lastTopbarMs > 1000) {
+    // Topbar refresh: charging gets a smooth lightweight region animation;
+    // idle status remains low-cost.
+    bool charging = batteryCharging();
+    bool topbarRedrawn = false;
+    uint32_t topbarInterval = charging ? 85U : 750U;
+    if (millis() - lastTopbarMs > topbarInterval) {
         lastTopbarMs = millis();
-        drawTopbar(batteryPercent(), batteryCharging(), sdOk);
+        drawTopbar(batteryPercent(), charging, sdOk);
+        topbarRedrawn = true;
     }
 
     // Composite/move the on-screen cursor sprite, after all other drawing
     // for this frame, right before it's pushed to the panel. No-ops when
     // Trackball: Cursor mode is off. See cursor.h.
     cursorTick();
+
+    // Present the topbar after the cursor has been composited, so cursor mode
+    // stays visually stable even when the pointer is sitting in this region.
+    if (topbarRedrawn) displayFlushRegion(0, 0, SCREEN_W, TOPBAR_HEIGHT);
 
     flushDisplay();
 

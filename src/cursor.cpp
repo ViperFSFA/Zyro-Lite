@@ -24,6 +24,28 @@ static bool backingValid = false;
 static bool suppressed = false;
 static uint16_t backing[CURSOR_H][CURSOR_W];
 
+static bool cursorBitmapPixel(int x, int y) {
+    const int rowBytes = (CURSOR_W + 7) / 8;
+    uint8_t value = image_cursor_black_white_bits[y * rowBytes + (x / 8)];
+    return ((value >> (7 - (x % 8))) & 0x01) != 0;
+}
+
+// A menu, app, or topbar may repaint beneath a stationary cursor between
+// cursor ticks. Detect that before restoring the old backing; otherwise the
+// stale rectangle would punch a small visual hole into the fresh screen.
+static bool framebufferStillHasDrawnCursor() {
+    if (!backingValid) return false;
+    uint16_t *fb = displayGetFramebuffer();
+    if (!fb) return false;
+    for (int row = 0; row < CURSOR_H; row++) {
+        for (int col = 0; col < CURSOR_W; col++) {
+            uint16_t expected = cursorBitmapPixel(col, row) ? 0xFFFF : backing[row][col];
+            if (fb[(drawnY + row) * SCREEN_W + drawnX + col] != expected) return false;
+        }
+    }
+    return true;
+}
+
 void cursorInit() {
     cursorX = (SCREEN_W - CURSOR_W) / 2;
     cursorY = (SCREEN_H - CURSOR_H) / 2;
@@ -84,6 +106,7 @@ void cursorTick() {
     // same patch this frame - e.g. the topbar's periodic refresh - so we
     // save fresh, correct pixels next), then composite this frame's sprite
     // on top of everything, last.
+    if (backingValid && !framebufferStillHasDrawnCursor()) backingValid = false;
     restoreUnder();
     drawOver();
 }

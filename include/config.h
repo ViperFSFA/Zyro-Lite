@@ -1,11 +1,11 @@
 #pragma once
 
 #define FW_NAME              "Zyro-Lite"
-#define FW_VERSION           "V1.0"
+#define FW_VERSION           "V1.2"
 
 // RF (SX1262 LoRa) subsystem/firmware version shown on the Device Info page.
 // This is a build-config constant, not something read back from the radio.
-#define RF_HW_VERSION         "1.0"
+#define RF_HW_VERSION         "V1.1"
 
 // Display 
 #define SCREEN_W              320
@@ -16,17 +16,17 @@
 #define SPLASH_DURATION_MS    2000
 
 // Menu animation 
-#define HIGHLIGHT_ANIM_MS     140   // glide duration for the selection highlight
+#define HIGHLIGHT_ANIM_MS     115   // faster glide with more intermediate frames
 #define ROW_HEIGHT             34
-#define TOPBAR_HEIGHT           20
+#define TOPBAR_HEIGHT           24
 
 // Menu row icon animations (bitmap, optional per-item) 
 #define ICON_SRC_SIZE           64   // source bitmap width/height in pixels
 #define ICON_FRAME_COUNT        28   // frames per animation (all current assets use 28)
 #define ICON_RENDER_SIZE        24   // on-screen size the icon is downscaled to
-#define ICON_FRAME_MS           90   // ms between animation frames while highlighted
+#define ICON_FRAME_MS           55   // quicker selected-icon animation (~18 fps)
 
-#define ANIM_FRAME_MS           16
+#define ANIM_FRAME_MS           10   // region flushes make this achievable without full-screen transfers
 
 // Full-screen overlays (loading / alert) 
 #define OVERLAY_SPINNER_SIZE     48  //globe

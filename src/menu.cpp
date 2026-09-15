@@ -207,6 +207,10 @@ void Menu::drawAnimatingFrame() {
         drawRow(scrollOffset + screenRow, screenRow, false); // pill drawn on top below
     }
     drawGlidingHighlight();
+
+    int flushY = TOPBAR_HEIGHT + 2 + lo * ROW_HEIGHT;
+    int flushH = (hi - lo + 1) * ROW_HEIGHT;
+    displayFlushRegion(0, flushY, SCREEN_W, min(flushH, SCREEN_H - flushY));
 }
 
 void Menu::drawScrollbar() {
@@ -276,6 +280,8 @@ void Menu::tick() {
         int vis = visibleRows();
         if (screenRow >= 0 && screenRow < vis) {
             drawRow(current, screenRow, true);
+            int flushY = TOPBAR_HEIGHT + 2 + screenRow * ROW_HEIGHT;
+            displayFlushRegion(0, flushY, SCREEN_W, min(ROW_HEIGHT, SCREEN_H - flushY));
         }
         return;
     }
