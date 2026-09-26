@@ -1,9 +1,9 @@
 #include "zyro_runtime.h"
 
-// Freestanding runtime: everything a .zApp needs that would normally come
-// from libc/libstdc++, reimplemented here so the final link has zero
-// external symbols. pack_zapp.py always compiles this file into every app
-// alongside your source. you never need to touch it.
+"""Freestanding runtime: everything a .zApp needs that would normally come
+from libc/libstdc++, reimplemented here so the final link has zero
+external symbols. pack_zapp.py always compiles this file into every app
+alongside your source. you never need to touch it."""
 
 extern "C" {
 
@@ -83,19 +83,14 @@ char *strcat(char *dst, const char *src) {
 }
 
 // Called if a virtual function is ever invoked (shouldn't happen in
-// correct code, but the symbol must exist for the linker if you use
+// correct code, but the symbol must exist for the linker if using
 // virtual classes at all).
 void __cxa_pure_virtual() { for (;;) {} }
 
-// Guards for function-local statics. -fno-threadsafe-statics avoids the
-// thread-safety machinery, but GCC still emits a plain (non-atomic) guard
-// check. this is a single-threaded target so a simple flag is correct.
+// Guards for function-local statics.
 int __cxa_guard_acquire(uint64_t *g) { return !(*((uint8_t *)g)); }
 void __cxa_guard_release(uint64_t *g) { *((uint8_t *)g) = 1; }
 void __cxa_guard_abort(uint64_t *) {}
-
-// operator delete needs a matching sized/unsized extern "C"-less pair below
-// (kept out of extern "C" since these are C++-linkage operators).
 
 }
 
@@ -122,7 +117,6 @@ void operator delete(void *, size_t) noexcept {}
 void operator delete[](void *, size_t) noexcept {}
 
 // Helpers
-
 extern "C" int zyro_itoa(int value, char *buf, size_t bufSize) {
     if (bufSize == 0) return 0;
     unsigned int uv;
@@ -141,7 +135,7 @@ extern "C" int zyro_itoa(int value, char *buf, size_t bufSize) {
 
 extern "C" int zyro_utoa(unsigned int value, char *buf, size_t bufSize) {
     if (bufSize == 0) return 0;
-    char tmp[10]; // max digits for a 32-bit unsigned value
+    char tmp[10];
     int t = 0;
     if (value == 0) tmp[t++] = '0';
     while (value > 0 && t < (int)sizeof(tmp)) {

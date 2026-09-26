@@ -38,10 +38,7 @@ void showLoadingOverlay(const char *label) {
     int areaY = TOPBAR_HEIGHT;
     int areaH = SCREEN_H - TOPBAR_HEIGHT;
 
-    // One full clear + the (static) label text, drawn once here. The
-    // per-frame tick only needs to touch the spinner's own small square from
-    // here on, instead of re-clearing/re-drawing the whole content area on
-    // every single frame. see loadingOverlayTick() for why that matters.
+    // One full clear + the (static) label text, drawn once here.
     gfx->fillRect(0, areaY, SCREEN_W, areaH, t.bg);
 
     loadingSpinnerX = (SCREEN_W - OVERLAY_SPINNER_SIZE) / 2;
@@ -90,7 +87,6 @@ static void alertDrawFrame(int frame, int secondsLeft) {
     const Theme &t = gSettings.theme();
 
     // This is a hard-stop screen, so it blanks EVERYTHING (topbar included).
-    // not just the content area.
     gfx->fillScreen(t.bg);
 
     int iconX = (SCREEN_W - ALERT_ICON_SIZE) / 2;
@@ -98,7 +94,7 @@ static void alertDrawFrame(int frame, int secondsLeft) {
     drawScaledFrame(warning_blink_64_64_28f_frames[frame], iconX, iconY, ALERT_ICON_SIZE, t.bad);
 
     int textY = iconY + ALERT_ICON_SIZE + 14;
-    // UI_FONT (see display.h) for the alert message - a single short line
+    // UI_FONT (see display.h) for the alert message. a single short line
     // with plenty of headroom, unlike the dense per-app diagnostic screens.
     // It's proportional, so measure the real width via getTextBounds()
     // instead of guessing px-per-char, and reset to the built-in font
@@ -152,12 +148,6 @@ void alertTick() {
     if (millis() - lastAlertFrameMs < ALERT_FRAME_MS) return;
     lastAlertFrameMs = millis();
 
-    // Polled at the same ~80ms cadence as the animation frame rather than
-    // every single loop() iteration. resolvedCheck() may do real work (e.g.
-    // an SD card filesystem check), and 80ms is still effectively instant
-    // from a person's point of view. This is what lets the alert clear
-    // itself early the moment the problem goes away instead of always
-    // sitting there for the full 5 seconds.
     if (alertResolvedCheck && alertResolvedCheck()) {
         alertClose();
         return;

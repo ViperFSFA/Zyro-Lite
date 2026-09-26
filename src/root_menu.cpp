@@ -11,7 +11,7 @@
 #include "activity_64_64_28f.h"    // RF
 #include "money_64_64_28f.h"       // Games
 #include "add_folder_64_64_28f.h"  // Apps (file browser)
-#include "ble_64_64_28f.h"         // BLE (converted from a static bitmap - all frames identical)
+#include "ble_64_64_28f.h"         // BLE (converted from a static bitmap. all frames identical)
 #include "tune_64_64_28f.h"        // GPIO / Tuning
 
 extern AppModule *gActiveApp; // defined in main.cpp
@@ -31,11 +31,6 @@ void rootMenuInit() {
         root = nullptr;
     }
 
-    // Two-letter monograms are the fallback "icon" for rows that don't have a
-    // bitmap animation wired in yet. Every row currently has one.
-    // Rows with a bitmap icon (last two args) render that instead: static
-    // frame 0 normally, animating only while that row is the highlighted
-    // selection.
     std::vector<MenuItem> items = {
         { "WiFi",      "WF", [](){ launch(1); }, wifi_search_64_64_28f_frames, ICON_FRAME_COUNT },
         { "BLE",       "BT", [](){ launch(2); }, ble_64_64_28f_frames, ICON_FRAME_COUNT },

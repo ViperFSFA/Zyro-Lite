@@ -18,8 +18,7 @@ enum Mode {
     MODE_HID
 };
 
-// Standard composite keyboard+mouse HID report map (report ID 1 = keyboard,
-// report ID 2 = mouse).
+// Standard
 static const uint8_t hidReportDescriptor[] = {
     0x05, 0x01,       // USAGE_PAGE (Generic Desktop)
     0x09, 0x06,       // USAGE (Keyboard)
@@ -77,16 +76,12 @@ static std::vector<BleDevInfo> devList;
 static int sel = 0;
 static int scrollTop = 0;
 static volatile bool scanning = false;
-// scanJustFinished is only set from the BLE host task. It is cleared
-// exclusively from the main task in tick(). This flag must only ever be
-// acted on when we are still in a scanner/beacon mode. If the user
-// navigated away before the scan completed, we discard the results.
 static volatile bool scanJustFinished = false;
 
 static bool bleReady = false;
 static NimBLEScan *pScan = nullptr;
 
-// --- BLE Remote Control (HID keyboard + mouse over GATT) ---
+// BLE Remote Control (HID keyboard + mouse over GATT)
 static bool hidReady = false;
 static NimBLEHIDDevice *hid = nullptr;
 static NimBLECharacteristic *inputKeyboard = nullptr;
@@ -106,8 +101,6 @@ class HidServerCallbacks : public NimBLEServerCallbacks {
     }
     void onDisconnect(NimBLEServer *server, ble_gap_conn_desc *desc) override {
         hidConnected = false;
-        // Restart advertising so the remote can reconnect without
-        // re-entering this screen.
         NimBLEDevice::startAdvertising();
     }
 };
@@ -443,10 +436,7 @@ static void onExit() {
 
     if (scanning) {
         if (pScan) pScan->stop();
-        // pScan->stop() is async. Give the host task a bounded window to
-        // deliver the completion event and flip scanning=false before we
-        // tear the stack down underneath it. This prevents the
-        // use-after-free that was the remaining crash source.
+        // pScan->stop() is async.
         uint32_t waitStart = millis();
         while (scanning && (millis() - waitStart) < 300) {
             delay(5);

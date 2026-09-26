@@ -17,16 +17,9 @@
 
 extern SPIClass *gSharedSPI;
 
-// ============================================================================
-// Everything in this file is the ONLY code that ever touches a .zApp's
-// bytes. See zapp_loader.h for the overall design rationale.
-// ============================================================================
+// Everything in this file is the ONLY code that ever touches a .zApp's bytes. See zapp_loader.h for the overall design rationale.
 
-// ---- reboot-survives crash guard -----------------------------------------
-// RTC slow memory keeps its contents across a software reset/panic (though
-// not a full power-cycle) - exactly what's needed to notice "the last thing
-// that happened before this boot was a zApp running" after the reset has
-// already happened and every other RAM variable is gone.
+// reboot-survives crash guard
 #define ZAPP_GUARD_MAGIC 0x5A41504Cu // "ZAPL"
 RTC_NOINIT_ATTR static uint32_t gZappGuardMagic;
 RTC_NOINIT_ATTR static char gZappGuardName[ZAPP_NAME_MAX + 1];
@@ -48,14 +41,7 @@ void zappCheckCrashGuard() {
     showAlert("Error, Review your app on another device", nullptr, rootMenuForceRedraw);
 }
 
-// ---- soft (in-app) fault containment -------------------------------------
-// longjmp, not a C++ exception: the loaded object is a bare relocated blob
-// with no linked unwind tables of its own, so throwing across that boundary
-// is not something to rely on. setjmp/longjmp only touches the stack
-// pointer/registers, so it works regardless of what compiled the code on
-// either side. Every call INTO app code goes through callGuarded() below;
-// nothing but a plain function-pointer invocation ever sits between the
-// setjmp and the longjmp target.
+// soft (in-app) fault containment
 static jmp_buf gZappJumpBuf;
 static bool gZappFaulted = false;
 static char gZappFaultMsg[64];
@@ -65,7 +51,7 @@ static void reportErrorImpl(const char *msg) {
     longjmp(gZappJumpBuf, 1);
 }
 
-// ---- loaded-app state ------------------------------------------------------
+// loaded-app state
 static ZyroAppModule gLoaded = {};
 static bool gAppLoaded = false;
 static bool gExitRequested = false;
@@ -76,7 +62,7 @@ static uint8_t *gTextBuf = nullptr;
 static uint8_t *gDataBuf = nullptr; // holds rodata+data+bss back to back
 
 // runs fn() under the fault guard; returns false if it faulted (reportError
-// or a caught C++ exception) - caller should treat that as "stop now".
+// or a caught C++ exception).
 static bool callGuarded(void (*fn)()) {
     if (!fn) return true;
     if (setjmp(gZappJumpBuf) != 0) { gZappFaulted = true; return false; }
@@ -90,13 +76,13 @@ static bool callGuarded(void (*fn)()) {
     return true;
 }
 
-// =============================== ZyroApi ===================================
+// ZyroApi
 // Every function below is what a .zApp can actually reach. Keep this list
-// the sandbox boundary - don't add anything here that reaches outside the
+// the sandbox boundary. don't add anything here that reaches outside the
 // app's own canvas rect / sandbox folder / the existing pin allowlist.
 
-// --- canvas: always offset so (0,0) == first pixel below the topbar, and
-// clamped so nothing can be drawn back up into the topbar strip itself. ---
+// canvas: always offset so (0,0) == first pixel below the topbar, and
+// clamped so nothing can be drawn back up into the topbar strip itself.
 static inline int cvY(int y) { return y + TOPBAR_HEIGHT; }
 
 static void api_fillRect(int x, int y, int w, int h, uint16_t c) {
@@ -111,7 +97,7 @@ static void api_setCursor(int x, int y) { if (y < 0) y = 0; gfx->setCursor(x, cv
 static void api_setTextColor(uint16_t c) { gfx->setTextColor(c); }
 static void api_print(const char *s) { if (s) gfx->print(s); }
 
-// --- file: sandboxed to /apps/<running app>/data/ --------------------------
+// file: sandboxed to /apps/<running app>/data/
 static int api_readAll(const char *relPath, uint8_t *outBuf, size_t maxLen) {
     String full = zappSandboxResolve(gRunningAppName, relPath);
     if (full.length() == 0) return -1;
@@ -140,7 +126,7 @@ static bool api_remove(const char *relPath) {
     return full.length() > 0 && SD.remove(full);
 }
 
-// --- wifi --------------------------------------------------------------
+// wifi
 static bool api_wifiScan(char names[][33], int maxNetworks, int *outCount) {
     WiFi.mode(WIFI_STA);
     int n = WiFi.scanNetworks();
@@ -166,13 +152,11 @@ static bool api_wifiConnect(const char *ssid, const char *pass, uint32_t timeout
 static bool api_wifiIsConnected() { return WiFi.status() == WL_CONNECTED; }
 static void api_wifiDisconnect() { WiFi.disconnect(true); }
 
-// --- ble -----------------------------------------------------------------
+// ble
 static NimBLEScan *gBleScan = nullptr;
 static bool api_bleScan(char names[][33], int maxDevices, int *outCount, uint32_t scanMs) {
     if (!NimBLEDevice::getInitialized()) NimBLEDevice::init("");
     gBleScan = NimBLEDevice::getScan();
-    // NimBLE-Arduino's blocking start() takes whole seconds, not ms - this
-    // library version has no getResults(ms, bool) overload (older API only).
     uint32_t scanSec = scanMs / 1000;
     if (scanSec == 0) scanSec = 1;
     NimBLEScanResults results = gBleScan->start(scanSec, false);
@@ -197,9 +181,8 @@ static void api_bleAdvertiseStop() {
     if (NimBLEDevice::getInitialized()) NimBLEDevice::getAdvertising()->stop();
 }
 
-// --- lora ------------------------------------------------------------------
-// Owns its own SX1262 instance, same "each app initializes its own radio
-// fresh" pattern as lora_app.cpp / rf_app.cpp - never shares state with them.
+// lora
+// Owns its own SX1262 instance
 static Module *gLoraModule = nullptr;
 static SX1262 *gLoraRadio = nullptr;
 static bool gLoraOk = false;
@@ -231,7 +214,7 @@ static int api_loraReceive(uint8_t *outBuf, size_t maxLen, uint32_t timeoutMs) {
     return 0;
 }
 
-// --- gpio: index-based into the existing GPIO_CUSTOM_PINS allowlist -------
+// gpio: index-based into the existing GPIO_CUSTOM_PINS allowlist
 static int  api_gpioPinCount() { return (int)GPIO_CUSTOM_PIN_COUNT; }
 static bool api_gpioRead(int idx) {
     if (idx < 0 || idx >= (int)GPIO_CUSTOM_PIN_COUNT) return false;
@@ -244,7 +227,7 @@ static void api_gpioWrite(int idx, bool high) {
     digitalWrite(GPIO_CUSTOM_PINS[idx], high ? HIGH : LOW);
 }
 
-// --- system ----------------------------------------------------------------
+// system
 static uint32_t api_millis() { return millis(); }
 static int  api_battPct() { return batteryPercent(); }
 static bool api_battChg() { return batteryCharging(); }
@@ -264,8 +247,7 @@ static ZyroApi gApi = {
     { api_millis, api_battPct, api_battChg, api_log, api_reportError }
 };
 
-// ============================ .zApp load/unload =============================
-
+// .zApp load/unload
 static void freeAppMemory() {
     if (gTextBuf) { heap_caps_free(gTextBuf); gTextBuf = nullptr; }
     if (gDataBuf) { heap_caps_free(gDataBuf); gDataBuf = nullptr; }
@@ -355,7 +337,7 @@ static bool loadZapp(const String &appName) {
         if (r.offsetInTarget + 4 > targetLimit) { failLoad("relocation out of range"); return false; }
         uint32_t value = (uint32_t)(bases[r.refSection] + r.addend);
         if (r.targetSection == ZAPP_SEC_TEXT) {
-            // Same IRAM 32-bit-only restriction as above - a plain memcpy()
+            // Same IRAM 32-bit-only restriction as above. a plain memcpy()
             // here was the second place a stray byte-store into gTextBuf
             // could reboot the device. offsetInTarget is always word-aligned
             // for a genuine pointer-literal relocation, so a direct aligned
@@ -385,7 +367,7 @@ static bool loadZapp(const String &appName) {
     return true;
 }
 
-// ============================== AppModule shim ==============================
+// AppModule shim
 
 void zappSetPending(const char *appFolderName) {
     gPendingAppName = appFolderName ? appFolderName : "";
@@ -439,8 +421,6 @@ static void zrTick() {
 static void zrHandleInput(const InputResult &in) {
     if (!gAppLoaded || gExitRequested || !gLoaded.handleInput) return;
     ZyroInput z = mapInput(in);
-    // handleInput takes an argument, so it can't go through the plain
-    // void(*)() signature callGuarded() expects - inline the same guard here.
     if (setjmp(gZappJumpBuf) != 0) {
         gZappFaulted = true;
         disarmCrashGuard();

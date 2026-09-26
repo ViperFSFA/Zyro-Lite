@@ -38,19 +38,19 @@ static int dynamicCcCs = GPIO_CC1101_CS_PIN;
 static int dynamicCcGdo0 = GPIO_CC1101_GDO0_PIN;
 static int dynamicCcGdo2 = GPIO_CC1101_GDO2_PIN;
 
-// --- NRF24L01 ---
+// NRF24L01
 static nRF24 *nrf = nullptr;
 static Module *nrfModule = nullptr;
 static bool nrfConfigured = false;
 static bool nrfOk = false;
 
-// --- CC1101 ---
+// CC1101
 static CC1101 *cc = nullptr;
 static Module *ccModule = nullptr;
 static bool ccConfigured = false;
 static bool ccOk = false;
 
-// --- Custom Pin Control ---
+// Custom Pin Control
 static bool customPinOn[16] = {false};
 static int customSel = 0;
 

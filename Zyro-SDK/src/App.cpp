@@ -78,8 +78,7 @@ static void appHandleInput(const ZyroInput &in) {
     if (in.type == ZI_BACK) {
         exitRequested = true;
     }
-    // ZI_UP / ZI_DOWN / ZI_LEFT / ZI_RIGHT / ZI_OK / ZI_CHAR (in.ch) are also
-    // available. see zyro_sdk_api.h's ZyroInputEvent.
+    // ZI_UP / ZI_DOWN / ZI_LEFT / ZI_RIGHT / ZI_OK / ZI_CHAR (in.ch) are also available. see zyro_sdk_api.h's ZyroInputEvent.
 }
 
 static void appOnExit() {

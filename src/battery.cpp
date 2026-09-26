@@ -21,9 +21,7 @@ int batteryPercent() {
     }
     lastSampleMs = now;
 
-    // NOTE: board uses a resistor divider on the ADC input; factor of 2 is the
-    // common ratio but verify with a multimeter and adjust
-    // BATT_DIVIDER_RATIO if readings are off.
+// multimeter verification needed, checks out poorly. but functioning for now
     const float BATT_DIVIDER_RATIO = 2.0f;
     // Average several ADC reads. A single ESP32 ADC reading can jump enough
     // to make both the percentage and charging UI visibly twitch.

@@ -42,15 +42,8 @@ static bool autoPing = false;
 static uint32_t lastAutoPingMs = 0;
 static const uint32_t AUTO_PING_INTERVAL_MS = 3000;
 
-// Shared LoRa frequency (also used/persisted by Chat setup below) - declared
-// here since Channel Monitor's draw needs it and comes before the Chat
-// section in this file.
 static float chatFreqMHz = 868.0f;
 
-// --- Beacon ---
-// Periodic broadcast beacon: sends an identifying packet on a timer so
-// other LoRa devices in range can confirm this one is alive/reachable,
-// same idea as a Flipper's sub-GHz beacon mode.
 static uint32_t beaconCount = 0;
 static bool beaconActive = false;
 static uint32_t lastBeaconMs = 0;
@@ -86,10 +79,7 @@ static void drawBeacon() {
     gfx->print(beaconActive ? ("Auto-beacon: ON (every " + String(BEACON_INTERVAL_MS / 1000) + "s)") : "Auto-beacon: OFF");
 }
 
-// --- Channel Monitor ---
-// Continuous ambient RSSI monitor on the current LoRa frequency - a rolling
-// scope plus a simple busy/clear call, useful as a listen-before-talk check
-// before firing off a transmission of your own.
+// channel monitor
 static float chanSamples[50] = {0};
 static int chanIdx = 0;
 static uint32_t lastChanMs = 0;
@@ -97,10 +87,6 @@ static const float CHANNEL_BUSY_THRESHOLD_DBM = -100.0f;
 
 static void sampleChannel() {
     if (!radioOk) return;
-    // Same bugfix as rf_app.cpp's Sub-GHz sweep: getRSSI() with no argument
-    // reports the LAST PACKET's RSSI, not the live ambient level - useless
-    // for a channel monitor, which needs to see what's happening BETWEEN
-    // packets. getRSSI(false) asks for the instantaneous reading instead.
     float r = radio->getRSSI(false);
     chanSamples[chanIdx] = r;
     chanIdx = (chanIdx + 1) % 50;
@@ -376,7 +362,7 @@ static void sendChatMessage() {
 }
 
 // Applies the setup screen's frequency to the radio. Needs a standby/start
-// cycle around it - RadioLib doesn't retune a receiver that's already
+// cycle around it. RadioLib doesn't retune a receiver that's already
 // mid-listen just because setFrequency() was called.
 static void applyChatFrequency() {
     if (!radioOk) return;
@@ -467,7 +453,7 @@ static void handleInput(const InputResult &in) {
         return;
     }
 
-    // Username entry on the setup screen - same "typing swallows everything
+    // Username entry on the setup screen. same "typing swallows everything
     // except BACK/ENTER" pattern used by the Wi-Fi password field.
     if (currentMode == MODE_CHAT_SETUP && chatUsernameEditing) {
         if (in.type == InputEvent::CHAR) {
@@ -491,7 +477,7 @@ static void handleInput(const InputResult &in) {
         return;
     }
 
-    // Chat's input line is always "open" - typing doesn't need a separate
+    // Chat's input line is always "open" typing doesn't need a separate
     // edit-mode toggle first, it just works the moment you're on this
     // screen, the way an actual chat app behaves. BACK erasing character-by-
     // character until the line's empty, then exiting the screen, is the same
@@ -553,7 +539,7 @@ static void handleInput(const InputResult &in) {
             drawBeacon();
         }
     } else if (currentMode == MODE_CHANNEL) {
-        // Just a passive scope - nothing to interact with besides BACK,
+        // Just a passive scope. nothing to interact with besides BACK,
         // which the shared BACK handler above already routes back to the menu.
     } else if (currentMode == MODE_CHAT_SETUP) {
         if (in.type == InputEvent::NAV_UP) {

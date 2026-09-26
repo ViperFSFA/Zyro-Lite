@@ -30,13 +30,9 @@ static bool screenBacklightOn = true;
 static uint32_t lastActivityMs = 0;
 
 // The canvas (see display.cpp) doesn't show anything on the physical panel
-// until flushed - flush() is a full 320x240x16bpp SPI burst (~150KB), so
+// until flushed. flush() is a full 320x240x16bpp SPI burst (~150KB), so
 // this is throttled rather than firing on every loop() iteration (which runs
-// essentially unthrottled, every ~2ms). Small region animations can update
-// much faster than a full-frame SPI transfer. Any
-// draws that happened since the last flush are still shown, just batched
-// together into the next flush instead of each getting its own SPI burst -
-// which is the whole point: only ever-complete frames reach the screen.
+// essentially unthrottled, every ~2ms).
 static void flushDisplay() {
     if (millis() - lastFlushMs < ANIM_FRAME_MS) return;
     lastFlushMs = millis();
@@ -66,11 +62,6 @@ static void touchScreenActivity() {
     }
 }
 
-// Re-checks the card is still readable (SD.begin() only ever runs once, at
-// boot, so without this we'd never notice the card being pulled). Also
-// doubles as the alert overlay's resolvedCheck. it's what lets the "SD Card
-// Removed" alert clear itself early the instant the card is reinserted,
-// instead of always sitting there for the full 5 seconds.
 static bool sdCardPresent() {
     File root = SD.open("/");
     bool ok = (bool)root;
@@ -106,16 +97,6 @@ void setup() {
     delay(300); // settle for the native-USB CDC link to enumerate, or so i've been told
     Serial.println("\n=== Zyro-Lite BOOT ===");
 
-    // NVS has to be valid before anything touches BLE: NimBLE's controller
-    // reads/writes Bluetooth calibration data from the NVS partition on
-    // init (esp_bt_controller_init), and a blank or out-of-date partition
-    // makes that call hard-fault the whole chip rather than fail cleanly -
-    // this is what was actually behind "every BLE screen reboots the
-    // device", not anything in ble_app.cpp itself. Settings moved off NVS
-    // onto /zyro.conf a while back (see settings.cpp), so nothing else in
-    // this firmware ever initializes NVS anymore - the BLE app was the
-    // only thing left that ever touched the partition, and it was never
-    // being formatted/mounted first.
     esp_err_t nvsErr = nvs_flash_init();
     if (nvsErr == ESP_ERR_NVS_NO_FREE_PAGES || nvsErr == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         nvs_flash_erase();
@@ -131,19 +112,18 @@ void setup() {
 
     // SD has to come up BEFORE settingsLoad() now: settings live in
     // /zyro.conf on the card instead of NVS. If there's no card, or no
-    // config file yet, settingsLoad() fails soft and just keeps the in-RAM
-    // defaults (see settings.cpp).
+    // config file yet, settingsLoad() fails soft and just keeps the in-RAM defaults (see settings.cpp).
     sdOk = SD.begin(BOARD_SDCARD_CS, SPI);
     Serial.printf("[boot] SD.begin: %s\n", sdOk ? "OK" : "not present");
 
     settingsLoad();
 
-    displayInit(); // uses gSettings.brightness - must come after settingsLoad()
+    displayInit(); // uses gSettings.brightness. must come after settingsLoad()
     screenBacklightOn = true;
     lastActivityMs = millis();
     Serial.println("[boot] displayInit done");
 
-    inputInit(); // uses gSettings.keyboardBacklight - must come after settingsLoad()
+    inputInit(); // uses gSettings.keyboardBacklight. must come after settingsLoad()
     cursorInit(); // must come after displayInit() (see cursor.h)
     audioInit();
     batteryInit();
@@ -219,7 +199,7 @@ void loop() {
     }
 
     // Route the input to whichever side owns it right now, but don't decide
-    // who ticks next until after that - handleInput() can itself launch an
+    // who ticks next until after that. handleInput() can itself launch an
     // app (root menu selecting something) or close one (app requesting
     // exit), and gActiveApp reflects that change immediately. Ticking based
     // on the value from before handleInput() ran meant a freshly launched
@@ -228,7 +208,7 @@ void loop() {
     // branch had already been chosen before the launch happened. That's the
     // "app icon/name still shows until you press a key" glitch.
     if (in.type == InputEvent::CURSOR_MOVE) {
-        // Trackball: Cursor mode - move the on-screen pointer instead of
+        // Trackball: Cursor mode. move the on-screen pointer instead of
         // routing this as menu/app navigation.
         cursorMove(in.dx, in.dy);
     } else if (gActiveApp) {

@@ -11,12 +11,7 @@ static bool sendKeyboardCommand(uint8_t cmd, uint8_t value);
 
 void inputSetTextEntryMode(bool on) { textEntryMode = on; }
 
-// The LilyGO T-Deck keyboard co-MCU I2C command set (from the official
-// LilyGO keyboard firmware source):
-//   0x01 = set backlight brightness (value 0x00=off, 0xFF=max)
-//   0x02 = set backlight on/off     (value 0x00=off, non-zero=on)
-// Both commands are accepted; command 0x02 is the simpler on/off toggle and
-// more reliably supported across keyboard firmware revisions.
+// switch out for another solution later. alt+b is the best solution anyway
 void keyboardSetBacklight(bool on) {
     uint8_t value = on ? (uint8_t)0xFF : (uint8_t)0x00;
 

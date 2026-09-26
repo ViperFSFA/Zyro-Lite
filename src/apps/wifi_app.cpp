@@ -32,27 +32,18 @@ static int netCount = 0;
 static int scrollTop = 0;
 static int sel = 0;
 static bool scanning = false;
-static bool scanPending = false; // true while an async WiFi.scanNetworks() is in flight
+static bool scanPending = false;
 
-// Networks sorted strongest-first for the connect list (built from the raw
-// scan results once they're in - WiFi.scanNetworks() doesn't guarantee any
-// particular order). sortedOrder[i] is a real index into the WiFi.SSID()/
-// WiFi.RSSI()/etc arrays.
 static std::vector<int> sortedOrder;
 
 // Spectrum state
 static int channelCounts[14] = {0};
 static int channelMaxRssi[14] = {-100};
 
-// Signal Monitor state - this now tracks the RSSI of whatever network we're
-// actually connected to (WiFi.RSSI(), no args), not a scan result, so it
-// reflects something real instead of an arbitrary scanned AP.
 static int signalHistory[40] = {0};
 static int historyIdx = 0;
 static uint32_t lastMonSample = 0;
 
-// Packet Monitor state - counts real 802.11 frames via the radio's
-// promiscuous mode, independent of whether we're connected to anything.
 static volatile uint32_t packetCounter = 0;
 static int packetHistory[40] = {0};
 static int packetHistIdx = 0;
@@ -453,14 +444,8 @@ static void stopPacketMonitor() {
     promiscuousOn = false;
 }
 
-// --- Beacon Spammer ---
-// Broadcasts spoofed 802.11 beacon frames with randomized SSIDs and source
-// MACs over raw WiFi TX - shows up as noise/fake APs to anything scanning
-// nearby, same idea as the classic ESP32 "beacon spam" tools. No deauth, no
-// client targeting, nothing aimed at an existing network - it's broadcast
-// frames only. Runs purely on a timer while this screen is open and stops
-// the moment you leave it (see stopBeaconSpam(), called from BACK and
-// onExit() below) so it never keeps running in the background.
+// Beacon Spammer
+// Broadcasts spoofed 802.11 beacon frames with randomized SSIDs and source MACs over raw WiFi TX
 static bool beaconSpamActive = false;
 static uint32_t beaconSpamCount = 0;
 static uint32_t lastBeaconSpamMs = 0;
@@ -478,15 +463,13 @@ static const uint8_t BEACON_TEMPLATE[24 + 12] = {
     0x00, 0x00,                                      // seq-ctl
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // timestamp
     0x64, 0x00,                                      // beacon interval (100 TU)
-    0x01, 0x04,                                      // capability info (ESS, short preamble)
+    0x01, 0x04,                                      // capability info
 };
 
 static void sendRandomBeacon() {
     uint8_t pkt[128];
     memcpy(pkt, BEACON_TEMPLATE, sizeof(BEACON_TEMPLATE));
 
-    // Random source MAC/BSSID. Locally-administered bit (0x02) set so this
-    // never collides with a real device's assigned vendor OUI.
     uint8_t mac[6];
     mac[0] = 0x02;
     for (int i = 1; i < 6; i++) mac[i] = (uint8_t)esp_random();
@@ -510,7 +493,6 @@ static void sendRandomBeacon() {
     memcpy(&pkt[offset], rates, sizeof(rates));
     offset += sizeof(rates);
 
-    // DS Parameter Set tag - random channel 1-11, just for variety.
     pkt[offset++] = 0x03;
     pkt[offset++] = 0x01;
     pkt[offset++] = (uint8_t)((esp_random() % 11) + 1);
@@ -596,11 +578,6 @@ static void tick() {
     } else if (currentMode == MODE_PACKETS && promiscuousOn) {
         if (millis() - lastPacketSampleMs > 250) {
             lastPacketSampleMs = millis();
-            // packetCounter is only ever incremented from the promiscuous
-            // callback and read/reset here, both on the same core's task
-            // context - not a true hardware ISR, so a plain volatile
-            // read-then-clear is enough. Disabling interrupts here would be
-            // overkill and risks stalling the WiFi/BT stack's own timing.
             uint32_t count = packetCounter;
             packetCounter = 0;
             packetHistory[packetHistIdx] = (int)count;
@@ -611,9 +588,7 @@ static void tick() {
         if (millis() - lastChannelHopMs > 700) {
             lastChannelHopMs = millis();
             if (WiFi.status() != WL_CONNECTED) {
-                // Free to hop channels looking for traffic. Once actually
-                // connected the channel's locked to the AP anyway, so leave
-                // it alone (see maybeHopChannel note in startPacketMonitor).
+                // Free to hop channels looking for traffic.
                 snifferChannel = (snifferChannel % 13) + 1;
                 esp_wifi_set_channel(snifferChannel, WIFI_SECOND_CHAN_NONE);
             }
@@ -630,11 +605,7 @@ static void tick() {
     }
 }
 
-static void handleInput(const InputResult &in) {
-    // Password text entry intercepts input before anything else below.
-    // while typing, BACK means "erase a character" (or "cancel the edit" once
-    // the field is already empty), not "leave this screen", which is
-    // what the generic BACK handling further down would otherwise do.
+static void handleInput(const InputResult &in) {o.
     if (currentMode == MODE_CONNECT_FORM && formEditing) {
         if (in.type == InputEvent::CHAR) {
             if (passwordBuf.length() < 63) passwordBuf += in.ch;
@@ -654,12 +625,10 @@ static void handleInput(const InputResult &in) {
             drawConnectForm();
             return;
         }
-        return; // swallow anything else (raw arrow codes etc.) while typing
+        return; 
     }
 
-    // Swallow all input while a connect attempt is in flight. same idea as
-    // the scanPending guards below, just also blocking BACK so you can't back
-    // out of the screen mid-attempt and leave WiFi.begin() running unseen.
+    // Swallow all input while a connect attempt is in flight.
     if (currentMode == MODE_CONNECT_FORM && connecting) return;
 
     if (currentMode == MODE_MENU) {
@@ -682,7 +651,7 @@ static void handleInput(const InputResult &in) {
     }
 
     if (currentMode == MODE_SPECTRUM || currentMode == MODE_MONITOR) {
-        if (WiFi.status() != WL_CONNECTED) return; // "connect first" screen is up, nothing to interact with
+        if (WiFi.status() != WL_CONNECTED) return; //
     }
 
     if (currentMode == MODE_CONNECT_LIST) {
@@ -762,7 +731,7 @@ static void handleInput(const InputResult &in) {
             }
         } else if (in.type == InputEvent::OK) {
             audioClickOk();
-            doScan(); // async now - pollScan() will redraw once results are in
+            doScan(); // async now. pollScan() will redraw once results are in
         }
     } else if (currentMode == MODE_SPECTRUM) {
         if (scanPending) return;
@@ -795,11 +764,7 @@ static void onExit() {
     stopBeaconSpam();
 
     WiFi.scanDelete();
-    // Only kill the radio if we're not actually on a network - closing this
-    // app used to always call WiFi.mode(WIFI_OFF), which silently dropped
-    // any connection the moment you backed out, making "Disconnect" the only
-    // way to leave the app while staying connected impossible. Leave a live
-    // connection alone; it's now something you disconnect on purpose.
+    // Only kill the radio if we're not actually on a network
     if (WiFi.status() != WL_CONNECTED) {
         WiFi.mode(WIFI_OFF);
     }

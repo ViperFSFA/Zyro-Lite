@@ -122,14 +122,6 @@ void Menu::drawGlidingHighlight() {
     const Theme &t = gSettings.theme();
     int vis = visibleRows();
 
-    // Only glide if both the row we're leaving and the row we're entering are
-    // currently on-screen. If a fast multi-step navigation scrolled one of them
-    // off-screen mid-flight, bail out of the glide. but still settle on a
-    // real drawn state via draw() instead of just flipping the flag and
-    // leaving nothing highlighted at all until the next tick happens to fix
-    // it. That gap (no pill, no drawGlidingHighlight call, animating already
-    // false) is what showed up as the highlight vanishing for a frame during
-    // fast/scrolling navigation.
     int prevScreenRow = previous - scrollOffset;
     int currScreenRow = current - scrollOffset;
     if (prevScreenRow < 0 || prevScreenRow >= vis || currScreenRow < 0 || currScreenRow >= vis) {
@@ -244,8 +236,7 @@ void Menu::draw() {
 
     // While the highlight is gliding between rows, draw every row in its plain
     // (unhighlighted) state. the moving pill is painted separately on top.
-    // so the destination row doesn't "snap" to highlighted before the pill
-    // actually arrives there.
+    // so the destination row doesn't "snap" to highlighted before the pill actually arrives there.
     for (int i = scrollOffset; i < end; i++) {
         int screenRow = i - scrollOffset;
         bool showHighlighted = (i == current) && !animating;
@@ -287,14 +278,6 @@ void Menu::tick() {
     }
 
     if (animating) {
-        // FLICKER: this loop() runs essentially as fast as the board can
-        // go (a 2ms delay at the bottom of loop()), so without a cap this was
-        // calling draw() dozens of times over a single 140ms glide. each one
-        // a full clear-and-redraw of the whole visible list. Capping to
-        // ANIM_FRAME_MS keeps the glide just as smooth (it's a ~140ms motion,
-        // not a long one) while cutting the redraw traffic drastically, and
-        // drawAnimatingFrame() (below) only touches the rows that actually
-        // change instead of the whole screen.
         if (millis() - lastAnimFrameMs < ANIM_FRAME_MS) return;
         lastAnimFrameMs = millis();
 
