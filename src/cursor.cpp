@@ -92,7 +92,7 @@ void cursorTick() {
         restoreUnder();
         return;
     }
-    
+
     if (backingValid && !framebufferStillHasDrawnCursor()) backingValid = false;
     restoreUnder();
     drawOver();

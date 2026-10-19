@@ -138,7 +138,7 @@ static void drawTracker() {
     gfx->print("Max spd : " + (maxSpeedKmh > 0 ? String(maxSpeedKmh, 1) + " km/h" : "--"));
     y += 16;
 
-    // Total distance accumulated 
+    // Total distance accumulated
     gfx->setTextColor(t.fg);
     gfx->setCursor(8, y);
     if (totalDistKm > 0) {

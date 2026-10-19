@@ -655,7 +655,7 @@ static void handleInput(const InputResult &in) {
             drawConnectForm();
             return;
         }
-        return; 
+        return;
     }
 
     // Swallow all input while a connect attempt is in flight.

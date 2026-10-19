@@ -403,7 +403,7 @@ static void handleInput(const InputResult &in) {
         } else if (in.type == InputEvent::OK) {
             audioClickOk();
             String name = myApps[myAppsSel].name;
-            onExit(); 
+            onExit();
             zappSetPending(name.c_str());
             gActiveApp = &gAppTable[10];
             gActiveApp->init();
@@ -463,7 +463,7 @@ static void onExit() {
 
 static bool wantsExit() { return exitApp; }
 
-} 
+}
 
 AppModule filesAppGet() {
     return { FilesApp::init, FilesApp::tick, FilesApp::handleInput, FilesApp::onExit, FilesApp::wantsExit };
