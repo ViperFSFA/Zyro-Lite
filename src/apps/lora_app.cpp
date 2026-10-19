@@ -68,7 +68,7 @@ static void sendBeacon() {
 
 static void drawBeacon() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -108,7 +108,7 @@ static void sampleChannel() {
 
 static void drawChannelMonitor() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -198,7 +198,7 @@ static void radioSetup() {
 
 static void drawRx() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
 
     gfx->setTextSize(1);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -235,7 +235,7 @@ static void drawRx() {
 
 static void drawPing() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
 
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
@@ -276,7 +276,7 @@ static void pushChatMsg(const String &user, const String &text, bool self) {
 
 static void drawChatSetup() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -313,7 +313,7 @@ static void drawChatSetup() {
 
 static void drawChat() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(6, TOPBAR_HEIGHT + 2);
@@ -457,6 +457,15 @@ static void tick() {
 }
 
 static void handleInput(const InputResult &in) {
+    if (in.type == InputEvent::TOUCH_TAP) {
+        if (currentMode == MODE_MENU && subSubMenu) { subSubMenu->handleInput(in); return; }
+        if(currentMode==MODE_CHAT_SETUP && !chatUsernameEditing) {
+            int row=(in.y-TOPBAR_HEIGHT-30)/26;
+            if(in.y<TOPBAR_HEIGHT+30 || row>2) return;
+            chatSetupSel=row;
+        }
+        InputResult ok = in; ok.type = InputEvent::OK; handleInput(ok); return;
+    }
     if (currentMode == MODE_MENU) {
         if (in.type == InputEvent::BACK) {
             exitApp = true;
@@ -605,4 +614,14 @@ static bool wantsExit() { return exitApp; }
 
 AppModule loraAppGet() {
     return { LoraApp::init, LoraApp::tick, LoraApp::handleInput, LoraApp::onExit, LoraApp::wantsExit };
+}
+
+int loraModuleHealth() { return LoraApp::radio ? (LoraApp::radioOk?1:0) : -1; }
+bool loraOpenTool(const String &tool) {
+    using namespace LoraApp;
+    if(!radioOk) return false;
+    if(tool=="ping") { currentMode=MODE_PING;sendPingPacket();drawPing();return true; }
+    if(tool=="beacon") { currentMode=MODE_BEACON;beaconActive=true;sendBeacon();drawBeacon();return true; }
+    if(tool=="monitor") { currentMode=MODE_CHANNEL;lastChanMs=0;drawChannelMonitor();return true; }
+    return false;
 }

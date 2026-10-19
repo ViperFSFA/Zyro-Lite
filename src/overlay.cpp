@@ -2,6 +2,8 @@
 #include "display.h"
 #include "settings.h"
 #include "config.h"
+#include "cursor.h"
+#include <cstring>
 #include "globe_64_64_28f.h"
 #include "warning_blink_64_64_28f.h"
 
@@ -80,6 +82,7 @@ void loadingOverlayTick() {
 
 // Alert overlay
 static bool alertOn = false;
+static uint16_t *alertBacking = nullptr;
 static char alertMsg[64] = {0};
 static uint32_t alertStartMs = 0;
 static uint32_t lastAlertFrameMs = 0;
@@ -123,6 +126,12 @@ static void alertDrawFrame(int frame, int secondsLeft) {
 }
 
 void showAlert(const char *message, bool (*resolvedCheck)(), void (*onDismiss)()) {
+    if (!alertOn) {
+        cursorErase();
+        if (!alertBacking) alertBacking = (uint16_t*)ps_malloc(SCREEN_W*SCREEN_H*sizeof(uint16_t));
+        if (alertBacking && displayGetFramebuffer())
+            memcpy(alertBacking,displayGetFramebuffer(),SCREEN_W*SCREEN_H*sizeof(uint16_t));
+    }
     alertOn = true;
     strncpy(alertMsg, message, sizeof(alertMsg) - 1);
     alertMsg[sizeof(alertMsg) - 1] = '\0';
@@ -137,6 +146,9 @@ bool alertActive() { return alertOn; }
 
 static void alertClose() {
     alertOn = false;
+    if (alertBacking && displayGetFramebuffer())
+        memcpy(displayGetFramebuffer(),alertBacking,SCREEN_W*SCREEN_H*sizeof(uint16_t));
+    cursorInvalidate();
     if (alertOnDismiss) alertOnDismiss();
 }
 

@@ -1,7 +1,7 @@
 #pragma once
 
 #define FW_NAME              "Zyro-Lite"
-#define FW_VERSION           "V1.2"
+#define FW_VERSION           "V1.3"
 
 // RF (SX1262 LoRa) subsystem/firmware version shown on the Device Info page.
 // This is a build-config constant, not something read back from the radio.

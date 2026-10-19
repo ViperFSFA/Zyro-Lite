@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino_GFX_Library.h>
+#include "config.h"
 #include "fonts/JetBrainsMono12pt7b.h"
 
 extern Arduino_GFX *gfx;
@@ -49,3 +50,15 @@ bool displayFlushIfChanged();
 // something without knowing what was underneath it. Returns nullptr if
 // called before displayInit().
 uint16_t *displayGetFramebuffer();
+
+// Shared diagnostic surfaces; built-in font and clipped single-line text.
+void uiAppSurface();
+void uiMetric(int x, int y, int w, const char *label, const String &value, uint16_t color);
+
+void displaySetContext(const char *label);
+
+void uiBeginViewport(int top,int bottom);
+void uiEndViewport();
+
+bool displayFlushDirtyRows(int top=0,int bottom=SCREEN_H);
+uint32_t displayLastTransferUs();

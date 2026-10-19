@@ -15,6 +15,8 @@ enum HighlightStyle {
 struct Settings {
     uint8_t themeId         = THEME_BLACK;
     uint8_t handedness      = HAND_RIGHT; // Default: Right-handed (IJKL)
+    char consoleNickname[17] = "user";
+    bool    touchEnabled    = true;
     bool    trackballCursor = false;  // if true, trackball moves a free cursor instead of menu nav
     bool    soundEnabled    = false;    // Default OFF. Master switch: no clicks reach the speaker at all when off
     bool    batterySaver    = false;

@@ -1,8 +1,16 @@
 #include "input.h"
 #include <Wire.h>
+#include <TouchDrvGT911.hpp>
 #include "pins.h"
 #include "config.h"
 #include "settings.h"
+
+static TouchDrvGT911 touch;
+static bool touchReady = false;
+static uint8_t touchAddress=0x5D;
+static bool touchHeld = false;
+static uint32_t lastTouchMs = 0, lastTouchSeenMs = 0;
+static int touchX = 0, touchY = 0;
 
 static uint32_t lastKeyMs = 0;
 static bool textEntryMode = false;
@@ -113,6 +121,17 @@ void inputInit() {
     // overall loop() cadence.
     Wire.setClock(400000);
 
+    touch.setPins(-1, BOARD_TOUCH_INT);
+    touchReady = touch.begin(Wire);
+    if (touchReady) {
+        Wire.beginTransmission(0x5D);
+        touchAddress=Wire.endTransmission()==0 ? 0x5D : 0x14;
+        touch.setMaxCoordinates(320, 240);
+        touch.setSwapXY(true);
+        touch.setMirrorXY(false, true);
+    }
+    Serial.printf("[touch] GT911: %s\n", touchReady ? "OK" : "not detected");
+
     pinMode(BOARD_KEYBOARD_INT, INPUT_PULLUP);
 
     pinMode(BOARD_TBOX_UP,    INPUT_PULLUP);
@@ -140,6 +159,32 @@ void inputInit() {
 InputResult inputPoll() {
     InputResult r;
 
+    if (touchReady && gSettings.touchEnabled && millis() - lastTouchMs >= 8) {
+        lastTouchMs = millis();
+        int16_t x[5], y[5];
+        // GT911's ready bit distinguishes a fresh release from "no new frame".
+        // This avoids both phantom releases and the previous 90 ms touch-up delay.
+        Wire.beginTransmission(touchAddress);Wire.write(0x81);Wire.write(0x4E);
+        int status=-1;
+        if(Wire.endTransmission(false)==0 && Wire.requestFrom(touchAddress,(uint8_t)1)==1) status=Wire.read();
+        bool ready=status>=0 && (status&0x80);
+        uint8_t count=ready ? touch.getPoint(x,y,5) : 0;
+        if (count) {
+            r.type = touchHeld ? InputEvent::TOUCH_MOVE : InputEvent::TOUCH_DOWN;
+            touchHeld = true;
+            lastTouchSeenMs = millis();
+            touchX = constrain((int)x[0], 0, 319);
+            touchY = constrain((int)y[0], 0, 239);
+            r.x = touchX; r.y = touchY;
+            return r;
+        } else if (touchHeld && (ready || millis()-lastTouchSeenMs >= 350)) {
+            touchHeld = false;
+            r.type = InputEvent::TOUCH_UP;
+            r.x = touchX; r.y = touchY;
+            return r;
+        }
+    }
+    if (!gSettings.touchEnabled) touchHeld = false;
     char c;
     if (millis() - lastKeyMs > 50) {
         lastKeyMs = millis();
@@ -191,3 +236,5 @@ InputResult inputPoll() {
     r.type = InputEvent::NONE;
     return r;
 }
+
+bool inputTouchAvailable() { return touchReady; }

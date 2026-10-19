@@ -22,3 +22,5 @@ void cursorInvalidate();              // drop any pending restore without touchi
                                        // the whole screen out from under us
 void cursorTick();                    // call every loop() iteration, after all other
                                        // drawing for that frame, right before flush()
+
+void cursorErase(); // remove the composited pointer before capturing an overlay background

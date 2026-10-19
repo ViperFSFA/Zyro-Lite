@@ -84,92 +84,26 @@ static String gpsCourseStr() {
 
 // ---- GPS Fix / Status screen ----
 static void drawFix() {
-    const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
-
-    gfx->setTextSize(1);
-    gfx->setTextColor(t.accent);
-    gfx->setCursor(8, TOPBAR_HEIGHT + 4);
-    gfx->print("GPS Status  (MIA-M10Q)");
-
-    int y = TOPBAR_HEIGHT + 22;
-
-    // Satellites
-    gfx->setTextColor(t.fg);
-    gfx->setCursor(8, y);
-    if (gps.satellites.isValid()) {
-        gfx->print("Sats    : " + String(gps.satellites.value()));
-    } else {
-        gfx->print("Sats    : Searching...");
-    }
-    y += 18;
-
-    // Location
-    gfx->setCursor(8, y);
-    if (gps.location.isValid()) {
-        gfx->setTextColor(t.ok);
-        gfx->print("Lat     : " + String(gps.location.lat(), 6));
-    } else {
-        gfx->setTextColor(t.warn);
-        gfx->print("Lat     : Awaiting 3D fix...");
-    }
-    y += 16;
-
-    gfx->setCursor(8, y);
-    if (gps.location.isValid()) {
-        gfx->setTextColor(t.ok);
-        gfx->print("Lng     : " + String(gps.location.lng(), 6));
-    } else {
-        gfx->setTextColor(t.warn);
-        gfx->print("Lng     : --");
-    }
-    y += 18;
-
-    // Altitude
-    gfx->setTextColor(t.fg);
-    gfx->setCursor(8, y);
-    gfx->print("Alt     : " + (gps.altitude.isValid() ? String(gps.altitude.meters(), 1) + " m" : "--"));
-    y += 16;
-
-    // Speed
-    gfx->setCursor(8, y);
-    gfx->print("Speed   : " + (gps.speed.isValid() ? String(gps.speed.kmph(), 1) + " km/h" : "--"));
-    y += 16;
-
-    // Course
-    gfx->setCursor(8, y);
-    gfx->print("Course  : " + gpsCourseStr());
-    y += 16;
-
-    // HDOP
-    gfx->setCursor(8, y);
-    gfx->print("HDOP    : " + (gps.hdop.isValid() ? String(gps.hdop.hdop(), 2) : "--"));
-    y += 16;
-
-    // Date / Time
-    gfx->setTextColor(t.dim);
-    gfx->setCursor(8, y);
-    gfx->print("UTC     : " + gpsTimeStr() + "  " + gpsDateStr());
-    y += 16;
-
-    // Fix quality indicator bar at the bottom
-    if (gps.satellites.isValid() && gps.satellites.value() > 0) {
-        int bars = constrain((int)gps.satellites.value(), 0, 12);
-        int barW = (SCREEN_W - 16) / 12;
-        for (int i = 0; i < 12; i++) {
-            uint16_t col = (i < bars) ? t.ok : t.dim;
-            gfx->fillRect(8 + i * barW, SCREEN_H - 12, barW - 2, 8, col);
-        }
-        gfx->setTextColor(t.dim);
-        gfx->setCursor(8, SCREEN_H - 24);
-        gfx->print("Signal strength");
-    }
+    const Theme &t=gSettings.theme(); uiAppSurface();
+    bool fix=gps.location.isValid() && gps.location.age()<5000;
+    gfx->setTextColor(t.accent); gfx->setCursor(8,TOPBAR_HEIGHT+4); gfx->print("GNSS / MIA-M10Q");
+    gfx->setTextColor(fix?t.ok:t.warn); gfx->setCursor(232,TOPBAR_HEIGHT+4); gfx->print(fix?"FIX LOCKED":"SEARCHING");
+    uiMetric(6,48,150,"SATELLITES",gps.satellites.isValid()?String(gps.satellites.value()):"--",t.accent);
+    uiMetric(162,48,152,"ACCURACY / HDOP",gps.hdop.isValid()?String(gps.hdop.hdop(),1):"--",t.fg);
+    gfx->fillRoundRect(6,101,308,49,7,t.topbarBg);
+    gfx->setTextColor(t.dim); gfx->setCursor(15,108); gfx->print("POSITION");
+    gfx->setTextColor(fix?t.ok:t.warn); gfx->setCursor(15,122);
+    gfx->print(fix?String(gps.location.lat(),6)+", "+String(gps.location.lng(),6):"Waiting for a fresh position...");
+    uiMetric(6,157,150,"ALTITUDE / M",gps.altitude.isValid()?String(gps.altitude.meters(),1):"--",t.fg);
+    uiMetric(162,157,152,"SPEED / KM/H",gps.speed.isValid()?String(gps.speed.kmph(),1):"--",t.fg);
+    gfx->setTextColor(t.dim); gfx->setCursor(8,215); gfx->print("UTC "+gpsTimeStr()+" / "+gpsDateStr());
+    gfx->setCursor(8,230); gfx->print("COURSE "+gpsCourseStr());
 }
 
 // ---- Coordinate Tracker / Distance screen ----
 static void drawTracker() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
 
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
@@ -237,7 +171,7 @@ static void drawTracker() {
 // ---- Compass / Heading screen ----
 static void drawCompass() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
 
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
@@ -286,7 +220,7 @@ static void drawCompass() {
 // ---- GPS Logger screen ----
 static void drawLogger() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
 
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
@@ -429,6 +363,10 @@ static void tick() {
 }
 
 static void handleInput(const InputResult &in) {
+    if (in.type == InputEvent::TOUCH_TAP) {
+        if (currentMode == MODE_MENU && subSubMenu) { subSubMenu->handleInput(in); return; }
+        InputResult ok = in; ok.type = InputEvent::OK; handleInput(ok); return;
+    }
     if (currentMode == MODE_MENU) {
         if (in.type == InputEvent::BACK) {
             exitApp = true;

@@ -11,6 +11,7 @@
 #include "cursor.h"
 #include "audio.h"
 #include "battery.h"
+#include "touch_ui.h"
 #include "splash.h"
 #include "menu.h"
 #include "app_api.h"
@@ -21,7 +22,12 @@
 SPIClass *gSharedSPI = &SPI;
 
 AppModule *gActiveApp = nullptr;
-AppModule gAppTable[11]; // index 10 = zappRunnerAppGet(), launched by files_app.cpp's My Apps screen, not root_menu.cpp
+AppModule gAppTable[12]; // index 10 = zappRunnerAppGet(), launched by files_app.cpp's My Apps screen, not root_menu.cpp
+
+static int pendingToolApp=-1;
+static String pendingTool;
+static bool returnToConsole=false;
+void appRequestTool(int appIndex,const String &tool) { pendingToolApp=appIndex;pendingTool=tool; }
 
 static bool sdOk = false;
 static uint32_t lastSdCheckMs = 0;
@@ -147,6 +153,7 @@ void setup() {
     cursorInit(); // must come after displayInit() (see cursor.h)
     audioInit();
     batteryInit();
+    Serial.printf("[battery] %d mV / ~%d%% (charge state unavailable)\n", batteryMillivolts(), batteryPercent());
 
     showSplash(sdOk);
 
@@ -162,6 +169,7 @@ void setup() {
     gAppTable[8] = filesAppGet();
     gAppTable[9] = gpioAppGet();
     gAppTable[10] = zappRunnerAppGet();
+    gAppTable[11] = commandAppGet();
 
     // If the device rebooted mid-.zApp last session (crash/hang forced a
     // reset), flag it here before anything else touches the menu - see
@@ -182,7 +190,7 @@ void loop() {
     static uint32_t lastTopbarMs = 0;
 
     // Both overlays are no-ops when not active, so these are cheap to call unconditionally every iteration.
-    loadingOverlayTick();
+    if (!touchUiActive() && !alertActive()) loadingOverlayTick();
     alertTick();
 
     handleScreenTimeout();
@@ -192,8 +200,10 @@ void loop() {
     if (millis() - lastSdCheckMs > 1000) {
         lastSdCheckMs = millis();
         bool nowPresent = sdCardPresent();
+        if (!sdOk && nowPresent) sdOk = true;
         if (sdOk && !nowPresent) {
             sdOk = false;
+            touchUiDismiss();
             showAlert("SD Card Removed", sdCardPresent, onSdAlertDismissed);
         }
     }
@@ -209,13 +219,50 @@ void loop() {
     }
 
     InputResult in = inputPoll();
+    static bool wakeGesture = false;
+    if (!screenBacklightOn && in.type == InputEvent::TOUCH_DOWN) wakeGesture = true;
     if (in.type != InputEvent::NONE) {
         touchScreenActivity();
     }
 
-    // Debug: log any input event to serial
-    if (in.type != InputEvent::NONE) {
-        Serial.printf("[input] event=%d ch=%c\n", (int)in.type, in.ch ? in.ch : '?');
+    if (wakeGesture) {
+        bool released = in.type == InputEvent::TOUCH_UP;
+        in.type = InputEvent::NONE;
+        if (released) wakeGesture = false;
+    }
+    bool touchConsumed = touchUiHandle(in);
+    if (touchUiActive()) {
+        touchUiDraw(); delay(1); return;
+    }
+    if (touchConsumed) in.type = InputEvent::NONE;
+
+    // Never log raw keyboard characters: a console command may contain a password.
+    if(returnToConsole && in.type==InputEvent::BACK && gActiveApp) {
+        gActiveApp->onExit();commandResume();gActiveApp=&gAppTable[11];
+        displaySetContext("CONSOLE");gActiveApp->init();returnToConsole=false;in.type=InputEvent::NONE;
+    }
+    // The USB console is local-only and uses the same command parser as the keyboard.
+    static String serialEntry;
+    if(gActiveApp!=&gAppTable[11]) {
+        while(Serial.available()) {
+            char c=Serial.read();
+            if(c=='\n' || c=='\r') {
+                if(serialEntry=="console") { commandResume();appRequestTool(11,"");serialEntry="";break; }
+                serialEntry="";
+            } else if(serialEntry.length()<32) serialEntry+=c;
+        }
+    }
+    if(pendingToolApp>=0) {
+        int index=pendingToolApp;String tool=pendingTool;pendingToolApp=-1;
+        if(gActiveApp) gActiveApp->onExit();
+        returnToConsole=index!=11;gActiveApp=&gAppTable[index];gActiveApp->init();
+        bool ok=true;
+        if(index==1) {displaySetContext("WI-FI");ok=wifiOpenTool(tool);}
+        else if(index==2) {displaySetContext("BLUETOOTH");ok=bleOpenTool(tool);}
+        else if(index==3) {displaySetContext("LORA");ok=loraOpenTool(tool);}
+        else displaySetContext("CONSOLE");
+        if(!ok) {gActiveApp->onExit();commandResume();gActiveApp=&gAppTable[11];gActiveApp->init();returnToConsole=false;}
+        in.type=InputEvent::NONE;
     }
 
     // Route the input to whichever side owns it right now, but don't decide
@@ -241,8 +288,9 @@ void loop() {
         gActiveApp->tick();
         if (gActiveApp->wantsExit()) {
             gActiveApp->onExit();
-            gActiveApp = nullptr;
-            rootMenuInit(); // redraw the launcher fresh
+            if(returnToConsole) {
+                returnToConsole=false;commandResume();gActiveApp=&gAppTable[11];displaySetContext("CONSOLE");gActiveApp->init();
+            } else {gActiveApp=nullptr;rootMenuInit();}
         }
     } else {
         rootMenuTick();

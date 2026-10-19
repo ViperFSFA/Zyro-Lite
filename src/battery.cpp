@@ -1,59 +1,41 @@
 #include "battery.h"
 #include "pins.h"
 #include "config.h"
+#include <algorithm>
 
-static int lastPct = 100;
-static int lastMv = 4200;
-static int trendMv = 0;
-static int chargeTrendScore = 0;
-static bool chargingDetected = false;
-static uint32_t lastSampleMs = 0;
-
+static int filteredMv = 0, percentage = 0;
+static uint32_t sampledAt = 0;
 void batteryInit() {
     analogReadResolution(12);
+    // Arduino-ESP32 3.x requires a registered channel before per-pin attenuation.
+    analogRead(BOARD_BATTERY_ADC);
     analogSetPinAttenuation(BOARD_BATTERY_ADC, ADC_11db);
 }
-
 int batteryPercent() {
-    uint32_t now = millis();
-    if (now - lastSampleMs < BATT_SAMPLE_MS && lastSampleMs != 0) {
-        return lastPct;
+    if (filteredMv && millis() - sampledAt < BATT_SAMPLE_MS) return percentage;
+    sampledAt = millis();
+    int samples[15];
+    for (int &v : samples) v = analogReadMilliVolts(BOARD_BATTERY_ADC) * 2;
+    std::sort(samples, samples + 15);
+    int mv = 0;
+    for (int i = 4; i < 11; ++i) mv += samples[i];
+    mv /= 7;
+    filteredMv = filteredMv ? (filteredMv * 7 + mv) / 8 : mv;
+    // Approximate resting single-cell Li-ion curve; not a fuel gauge.
+    static const int volts[] = {3300,3500,3600,3700,3750,3800,3850,3900,4000,4100,4200};
+    static const int levels[] = {0,5,10,20,30,40,50,60,75,90,100};
+    int next = filteredMv >= 4200 ? 100 : 0;
+    for (int i = 1; i < 11; ++i) {
+        if (filteredMv < volts[i]) {
+            next = levels[i-1] + (filteredMv-volts[i-1]) * (levels[i]-levels[i-1]) / (volts[i]-volts[i-1]);
+            break;
+        }
     }
-    lastSampleMs = now;
-
-    // NOTE: board uses a resistor divider on the ADC input; factor of 2 is the
-    // common ratio but verify with a multimeter and adjust
-    // BATT_DIVIDER_RATIO if readings are off.
-    const float BATT_DIVIDER_RATIO = 2.0f;
-    // Average several ADC reads. A single ESP32 ADC reading can jump enough
-    // to make both the percentage and charging UI visibly twitch.
-    uint32_t adcMv = 0;
-    for (int i = 0; i < 8; i++) adcMv += analogReadMilliVolts(BOARD_BATTERY_ADC);
-    uint32_t mv = (adcMv / 8) * BATT_DIVIDER_RATIO;
-
-    if (trendMv == 0) {
-        trendMv = (int)mv;
-    } else {
-        int delta = (int)mv - trendMv;
-        if (delta >= 3) chargeTrendScore = min(8, chargeTrendScore + 2);
-        else if (delta <= -3) chargeTrendScore = max(-8, chargeTrendScore - 3);
-        else if (chargeTrendScore > 0) chargeTrendScore--;
-        else if (chargeTrendScore < 0) chargeTrendScore++;
-
-        trendMv = (trendMv * 3 + (int)mv) / 4;
-        if (chargeTrendScore >= 4 && trendMv < BATT_ADC_MAX_MV - 15) chargingDetected = true;
-        if (chargeTrendScore <= -3 || trendMv >= BATT_ADC_MAX_MV - 10) chargingDetected = false;
-    }
-    lastMv = trendMv;
-
-    int pct = (int)(100.0f * (lastMv - BATT_ADC_MIN_MV) / (float)(BATT_ADC_MAX_MV - BATT_ADC_MIN_MV));
-    if (pct < 0) pct = 0;
-    if (pct > 100) pct = 100;
-    lastPct = pct;
-    return pct;
+    next = constrain(next, 0, 100);
+    if (!percentage || abs(next - percentage) >= 2) percentage = next;
+    return percentage;
 }
-
-bool batteryCharging() {
-    batteryPercent(); // refreshes the trend when the sample interval elapsed
-    return chargingDetected;
-}
+int batteryMillivolts() { batteryPercent(); return filteredMv; }
+// T-Deck exposes the cell ADC, but no verified charger-status GPIO.
+// Voltage rises are NOT proof of charging (load recovery causes them too).
+bool batteryCharging() { return false; }

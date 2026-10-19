@@ -58,7 +58,7 @@
 #define BOARD_GPS_RX_PIN        44
 
 // Misc
-#define BOARD_TOUCH_INT         16  // unused
+#define BOARD_TOUCH_INT         16  // GT911 capacitive touchscreen interrupt
 
 // --- GPIO app (external connector modules) ---
 // UNCONFIGURED ON PURPOSE. Every pin on the T-Deck is already spoken for by

@@ -110,3 +110,5 @@ void cursorTick() {
     restoreUnder();
     drawOver();
 }
+
+void cursorErase() { restoreUnder(); }

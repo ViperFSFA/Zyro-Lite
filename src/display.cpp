@@ -3,19 +3,28 @@
 #include "config.h"
 #include "settings.h"
 #include <WiFi.h>
+#include <SPI.h>
 #include "wifi_full_icon.h"
 #include <cstring>
 
+class SharedDisplaySPI : public Arduino_HWSPI {
+public:
+    using Arduino_HWSPI::Arduino_HWSPI;
+    // Use the core's burst pixel writer while preserving the existing shared-bus transaction.
+    void writePixels(uint16_t *data,uint32_t count) override { SPI.writePixels(data,count*2); }
+};
 static Arduino_DataBus *bus = nullptr;
 static Arduino_GFX *panel = nullptr;
 static Arduino_Canvas *canvas = nullptr;
 static uint16_t *presentedFrame = nullptr;
 Arduino_GFX *gfx = nullptr;
+static const char *screenContext = "HOME";
+void displaySetContext(const char *label) { screenContext = label ? label : "HOME"; }
 
 void displayInit() {
     // We must use Arduino_HWSPI to share the already-initialized SPI bus.
     // Arduino_ESP32SPI tries to initialize a new hardware SPI host, which causes a crash/boot loop.
-    bus = new Arduino_HWSPI(BOARD_TFT_DC, BOARD_TFT_CS,
+    bus = new SharedDisplaySPI(BOARD_TFT_DC, BOARD_TFT_CS,
                             BOARD_SPI_SCK, BOARD_SPI_MOSI, BOARD_SPI_MISO);
                             
     // The ST7789 panel is natively 240x320 portrait. 
@@ -40,14 +49,7 @@ void displayInit() {
     gfx = canvas;
 
     pinMode(BOARD_TFT_BACKLIGHT, OUTPUT);
-#if defined(ESP_ARDUINO_VERSION_VAL) && ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3,0,0)
-    ledcAttach(BOARD_TFT_BACKLIGHT, 5000, 8);
-#else
-    ledcSetup(0, 5000, 8);
-    ledcAttachPin(BOARD_TFT_BACKLIGHT, 0);
-#endif
-
-    gfx->begin();
+    gfx->begin(80000000);
     gfx->fillScreen(0x0000); // raw RGB565 black - avoids depending on a BLACK macro that isn't reliably defined by this library/include order
     gfx->flush(); // push that initial black frame before anything else draws over it
 
@@ -63,11 +65,18 @@ void displayInit() {
 }
 
 void displaySetBacklight(uint8_t value) {
-#if defined(ESP_ARDUINO_VERSION_VAL) && ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3,0,0)
-    ledcWrite(BOARD_TFT_BACKLIGHT, value);
-#else
-    ledcWrite(0, value);
-#endif
+    // T-Deck uses a 16-step pulse-controlled backlight, not PWM.
+    // Protocol matches LilyGO's UnitTest example.
+    static uint8_t level = 0;
+    uint8_t next = value ? max(1, (int(value)*16+254)/255) : 0;
+    if (!next) { digitalWrite(BOARD_TFT_BACKLIGHT,LOW); delay(3); level=0; return; }
+    if (!level) { digitalWrite(BOARD_TFT_BACKLIGHT,HIGH); delayMicroseconds(30); level=16; }
+    int pulses=(level-next+16)%16;
+    for(int i=0;i<pulses;i++) {
+        digitalWrite(BOARD_TFT_BACKLIGHT,LOW); delayMicroseconds(1);
+        digitalWrite(BOARD_TFT_BACKLIGHT,HIGH); delayMicroseconds(1);
+    }
+    level=next;
 }
 
 uint16_t *displayGetFramebuffer() {
@@ -93,13 +102,15 @@ void displayFlushRegion(int x, int y, int w, int h) {
         return;
     }
 
-    for (int row = 0; row < h; row++) {
-        uint16_t *src = fb + (y + row) * SCREEN_W + x;
-        panel->draw16bitRGBBitmap(x, y + row, src, w, 1);
-        if (presentedFrame) {
-            memcpy(presentedFrame + (y + row) * SCREEN_W + x, src, w * sizeof(uint16_t));
-        }
+    // Keep one address window and transaction for the whole strided rectangle.
+    Arduino_TFT *tft=static_cast<Arduino_TFT*>(panel);
+    tft->startWrite();tft->writeAddrWindow(x,y,w,h);
+    for (int row=0;row<h;row++) {
+        uint16_t *src=fb+(y+row)*SCREEN_W+x;
+        bus->writePixels(src,w);
+        if(presentedFrame) memcpy(presentedFrame+(y+row)*SCREEN_W+x,src,w*2);
     }
+    tft->endWrite();
 }
 
 bool displayFlushIfChanged() {
@@ -107,14 +118,13 @@ bool displayFlushIfChanged() {
     uint16_t *fb = canvas->getFramebuffer();
     const size_t bytes = SCREEN_W * SCREEN_H * sizeof(uint16_t);
     if (presentedFrame && memcmp(fb, presentedFrame, bytes) == 0) return false;
+    if(presentedFrame) return displayFlushDirtyRows();
     canvas->flush();
-    if (presentedFrame) memcpy(presentedFrame, fb, bytes);
     return true;
 }
 
-// Compact battery icon that always shows the real percentage. Charging adds
-// a moving highlight inside the existing fill instead of swapping between
-// stretched 64x64 animations, which looked distorted and jumped once/second.
+// Compact battery meter. Percentage is a smoothed voltage-based estimate.
+// Charging animation is reserved for a verified charger-status signal.
 static const int TOP_BATT_W = 22;
 static const int TOP_BATT_H = 12;
 
@@ -138,26 +148,23 @@ static void drawBatteryIcon(int x, int y, int pct, bool charging, uint16_t color
 
 void drawTopbar(int batteryPct, bool charging, bool sdOk) {
     const Theme &t = gSettings.theme();
+    gfx->setFont(NULL);
+    gfx->setTextWrap(false);
     gfx->fillRect(0, 0, SCREEN_W, TOPBAR_HEIGHT, t.topbarBg);
 
-    // Small brand marker and compact identity block.
-    gfx->fillRoundRect(5, 7, 4, 10, 2, t.accent);
-    gfx->setTextColor(t.accent);
-    gfx->setCursor(13, 8);
-    gfx->setTextSize(1);
-    gfx->print(FW_NAME);
-
-    // Version stays visible without competing with the device name.
-    gfx->setTextColor(t.dim);
-    gfx->setCursor(13 + strlen(FW_NAME) * 6 + 5, 8);
-    gfx->print(FW_VERSION);
+    gfx->fillRoundRect(5,5,3,14,1,t.accent);
+    gfx->setTextSize(1); gfx->setTextColor(t.fg);
+    gfx->setCursor(13,3); gfx->print("ZYRO");
+    gfx->setTextColor(t.dim); gfx->setCursor(13,14); gfx->print(FW_VERSION);
+    gfx->drawFastVLine(49,6,12,t.dim);
+    gfx->setTextColor(t.accent); gfx->setCursor(58,8); gfx->print(screenContext);
 
     // Status icons (right aligned)
     int x = SCREEN_W - 7;
 
     // Battery percentage text
     char buf[8];
-    snprintf(buf, sizeof(buf), "%d%%", batteryPct);
+    snprintf(buf, sizeof(buf), "~%d%%", batteryPct);
     int battTextW = strlen(buf) * 6;
     x -= battTextW;
     gfx->setCursor(x, 8);
@@ -191,4 +198,63 @@ void drawTopbar(int batteryPct, bool charging, bool sdOk) {
     }
 
     gfx->drawFastHLine(0, TOPBAR_HEIGHT - 1, SCREEN_W, t.dim);
+    if (gSettings.touchEnabled) gfx->fillRoundRect(149, 19, 22, 2, 1, t.accent);
+}
+
+void uiAppSurface() {
+    const Theme &t=gSettings.theme();
+    gfx->setFont(NULL); gfx->setTextSize(1); gfx->setTextWrap(false);
+    gfx->fillRect(0,TOPBAR_HEIGHT,SCREEN_W,SCREEN_H-TOPBAR_HEIGHT,t.bg);
+    gfx->fillRect(0,TOPBAR_HEIGHT,SCREEN_W,17,t.topbarBg);
+    gfx->drawFastHLine(6,TOPBAR_HEIGHT+16,SCREEN_W-12,t.dim);
+    gfx->drawFastHLine(6,TOPBAR_HEIGHT+16,32,t.accent);
+}
+void uiMetric(int x,int y,int w,const char *label,const String &value,uint16_t color) {
+    const Theme &t=gSettings.theme();
+    gfx->fillRoundRect(x,y,w,46,7,t.topbarBg);
+    gfx->setFont(NULL); gfx->setTextSize(1); gfx->setTextColor(t.dim);
+    gfx->setCursor(x+9,y+7); gfx->print(label);
+    gfx->setTextColor(color); gfx->setTextSize(2);
+    gfx->setCursor(x+9,y+23); gfx->print(value);
+    gfx->setTextSize(1);
+}
+
+static uint16_t *viewportBacking=nullptr;
+static int viewportTop=0,viewportBottom=SCREEN_H;
+void uiBeginViewport(int top,int bottom) {
+    viewportTop=constrain(top,0,SCREEN_H); viewportBottom=constrain(bottom,viewportTop,SCREEN_H);
+    if(!viewportBacking) viewportBacking=(uint16_t*)ps_malloc(SCREEN_W*SCREEN_H*2);
+    if(!viewportBacking) return;
+    uint16_t *fb=displayGetFramebuffer();
+    memcpy(viewportBacking,fb,viewportTop*SCREEN_W*2);
+    memcpy(viewportBacking+viewportBottom*SCREEN_W,fb+viewportBottom*SCREEN_W,(SCREEN_H-viewportBottom)*SCREEN_W*2);
+}
+void uiEndViewport() {
+    if(!viewportBacking) return;
+    uint16_t *fb=displayGetFramebuffer();
+    memcpy(fb,viewportBacking,viewportTop*SCREEN_W*2);
+    memcpy(fb+viewportBottom*SCREEN_W,viewportBacking+viewportBottom*SCREEN_W,(SCREEN_H-viewportBottom)*SCREEN_W*2);
+}
+
+static uint32_t lastTransferUs=0;
+uint32_t displayLastTransferUs() { return lastTransferUs; }
+bool displayFlushDirtyRows(int top,int bottom) {
+    uint32_t started=micros();uint16_t *fb=displayGetFramebuffer();if(!fb) return false;
+    top=constrain(top,0,SCREEN_H);bottom=constrain(bottom,top,SCREEN_H);
+    if(!presentedFrame) {displayFlushRegion(0,top,SCREEN_W,bottom-top);return true;}
+    bool changed=false;
+    // Sparse 16-row damage bands avoid sending the empty margins around text and cards.
+    for(int band=top;band<bottom;band+=16) {
+        int end=min(band+16,bottom),x0=SCREEN_W,x1=-1,y0=end,y1=-1;
+        for(int y=band;y<end;y++) {
+            uint16_t *a=fb+y*SCREEN_W,*b=presentedFrame+y*SCREEN_W;
+            if(memcmp(a,b,SCREEN_W*2)==0) continue;
+            int left=0,right=SCREEN_W-1;
+            while(left<SCREEN_W && a[left]==b[left]) ++left;
+            while(right>=left && a[right]==b[right]) --right;
+            x0=min(x0,left);x1=max(x1,right);y0=min(y0,y);y1=y;
+        }
+        if(x1>=x0) {displayFlushRegion(x0,y0,x1-x0+1,y1-y0+1);changed=true;}
+    }
+    lastTransferUs=micros()-started;return changed;
 }

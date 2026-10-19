@@ -197,6 +197,16 @@ static void tick() {
 }
 
 static void handleInput(const InputResult &in) {
+    if (in.type == InputEvent::TOUCH_TAP) {
+        if (currentMode == MODE_MENU && subSubMenu) { subSubMenu->handleInput(in); return; }
+        InputResult ok = in;
+        if(currentMode==MODE_PONG) ok.type=in.y<132?InputEvent::NAV_UP:InputEvent::NAV_DOWN;
+        else if(currentMode==MODE_SNAKE && !snakeGameOver) {
+            if(in.x<90) ok.type=InputEvent::NAV_LEFT;
+            else if(in.x>230) ok.type=InputEvent::NAV_RIGHT;
+            else ok.type=in.y<132?InputEvent::NAV_UP:InputEvent::NAV_DOWN;
+        } else ok.type=InputEvent::OK; handleInput(ok); return;
+    }
     if (currentMode == MODE_MENU) {
         if (in.type == InputEvent::BACK) {
             exitApp = true;

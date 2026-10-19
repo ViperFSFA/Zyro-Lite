@@ -8,6 +8,7 @@
 #include "menu.h"
 #include "zapp_registry.h"
 #include "zapp_loader.h"
+#include "touch_scroll.h"
 
 extern AppModule *gActiveApp; // defined in main.cpp - My Apps launches gAppTable[10] the same way root_menu.cpp launches everything else
 extern AppModule gAppTable[];
@@ -39,6 +40,7 @@ static String fileContent = "";
 // --- My Apps (Zyro-SDK user apps) ---
 static std::vector<ZappEntry> myApps;
 static int myAppsSel = 0;
+static int myAppsScroll = 0;
 
 // Install-from-SD browser: deliberately separate state from the SD File
 // Browser above so opening one never disturbs the other's position.
@@ -46,6 +48,9 @@ static std::vector<FileEntry> installFiles;
 static String installPath = "/";
 static int installSel = 0;
 static int installScrollTop = 0;
+static TouchScroll fileGesture,installGesture,appsGesture;
+static bool fileTouch=false,installTouch=false,appsTouch=false;
+static uint32_t lastTouchFrame=0;
 
 static void onExit(); // forward decl - MODE_MYAPPS's OK handler below calls this before handing off to the zApp runner
 
@@ -61,7 +66,7 @@ static void listDir() {
         files.push_back({ String(entry.name()), entry.isDirectory(), (size_t)entry.size() });
         entry = root.openNextFile();
     }
-    sel = 0; scrollTop = 0;
+    sel = 0; scrollTop = 0;fileGesture.reset();fileTouch=false;
 }
 
 // --- My Apps ---------------------------------------------------------------
@@ -73,7 +78,7 @@ static void refreshMyApps() {
 
 static void drawMyApps() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -90,8 +95,14 @@ static void drawMyApps() {
         return;
     }
 
-    for (int i = 0; i < (int)myApps.size(); i++) {
-        int y = TOPBAR_HEIGHT + 26 + i * 20;
+    if(myAppsSel<myAppsScroll) myAppsScroll=myAppsSel;
+    if(myAppsSel>=myAppsScroll+9) myAppsScroll=myAppsSel-8;
+    appsGesture.configure(myApps.size(),20,TOPBAR_HEIGHT+26,SCREEN_H-2);
+    float offset=appsTouch?appsGesture.position:myAppsScroll*20;
+    uiBeginViewport(TOPBAR_HEIGHT+26,SCREEN_H-2);
+    int first=int(offset)/20;
+    for (int i = first; i < min((int)myApps.size(),first+11); i++) {
+        int y = TOPBAR_HEIGHT + 26 + i*20-int(offset);
         bool hi = (i == myAppsSel);
         if (hi) gfx->fillRect(4, y - 2, SCREEN_W - 8, 18, t.accent);
         gfx->setTextColor(hi ? t.accentFg : (myApps[i].blocked ? t.warn : t.fg));
@@ -99,6 +110,7 @@ static void drawMyApps() {
         String tag = myApps[i].blocked ? "[!] " : "    ";
         gfx->print(tag + myApps[i].name);
     }
+    uiEndViewport();
 }
 
 static void listInstallDir() {
@@ -118,12 +130,12 @@ static void listInstallDir() {
         if (isDir || isZapp) installFiles.push_back({ name, isDir, (size_t)entry.size() });
         entry = root.openNextFile();
     }
-    installSel = 0; installScrollTop = 0;
+    installSel = 0; installScrollTop = 0;installGesture.reset();installTouch=false;
 }
 
 static void drawInstallBrowser() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -136,11 +148,12 @@ static void drawInstallBrowser() {
         return;
     }
 
-    int visibleRows = (SCREEN_H - TOPBAR_HEIGHT - 20) / 18;
-    for (int row = 0; row < visibleRows; row++) {
-        int i = installScrollTop + row;
-        if (i >= (int)installFiles.size()) break;
-        int y = TOPBAR_HEIGHT + 22 + row * 18;
+    installGesture.configure(installFiles.size(),18,TOPBAR_HEIGHT+22,SCREEN_H-2);
+    float offset=installTouch?installGesture.position:installScrollTop*18;
+    uiBeginViewport(TOPBAR_HEIGHT+20,SCREEN_H-2);
+    int first=int(offset)/18;
+    for (int i=first; i<min(int(installFiles.size()),first+13); i++) {
+        int y = TOPBAR_HEIGHT + 22 + i*18-int(offset);
         bool hi = (i == installSel);
         if (hi) gfx->fillRect(4, y - 2, SCREEN_W - 8, 16, t.accent);
         gfx->setTextColor(hi ? t.accentFg : t.fg);
@@ -148,11 +161,12 @@ static void drawInstallBrowser() {
         String tag = installFiles[i].isDir ? "[DIR] " : "      ";
         gfx->print(tag + installFiles[i].name.substring(0, 20));
     }
+    uiEndViewport();
 }
 
 static void drawFiles() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
 
     if (viewingFile) {
         gfx->setTextSize(1);
@@ -162,7 +176,9 @@ static void drawFiles() {
 
         gfx->setTextColor(t.fg);
         gfx->setCursor(8, TOPBAR_HEIGHT + 24);
+        gfx->setTextWrap(true);
         gfx->print(fileContent.substring(0, 400));
+        gfx->setTextWrap(false);
         return;
     }
 
@@ -171,11 +187,12 @@ static void drawFiles() {
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
     gfx->print("Path: " + currentPath);
 
-    int visibleRows = (SCREEN_H - TOPBAR_HEIGHT - 20) / 18;
-    for (int row = 0; row < visibleRows; row++) {
-        int i = scrollTop + row;
-        if (i >= (int)files.size()) break;
-        int y = TOPBAR_HEIGHT + 22 + row * 18;
+    fileGesture.configure(files.size(),18,TOPBAR_HEIGHT+22,SCREEN_H-2);
+    float offset=fileTouch?fileGesture.position:scrollTop*18;
+    uiBeginViewport(TOPBAR_HEIGHT+20,SCREEN_H-2);
+    int first=int(offset)/18;
+    for (int i=first; i<min(int(files.size()),first+13); i++) {
+        int y = TOPBAR_HEIGHT + 22 + i*18-int(offset);
         bool hi = (i == sel);
         if (hi) gfx->fillRect(4, y - 2, SCREEN_W - 8, 16, t.accent);
         gfx->setTextColor(hi ? t.accentFg : t.fg);
@@ -184,11 +201,12 @@ static void drawFiles() {
         String tag = files[i].isDir ? "[DIR] " : "      ";
         gfx->print(tag + files[i].name.substring(0, 20));
     }
+    uiEndViewport();
 }
 
 static void drawStats() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
 
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
@@ -206,7 +224,7 @@ static void drawStats() {
     gfx->print("Free PSRAM : " + String(ESP.getFreePsram() / 1024) + " KB");
 
     gfx->setCursor(8, TOPBAR_HEIGHT + 90);
-    gfx->print("Battery    : " + String(batteryPercent()) + "% (" + String(batteryCharging() ? "Charging" : "Discharging") + ")");
+    gfx->print("Battery    : ~" + String(batteryPercent()) + "% / " + String(batteryMillivolts()) + " mV");
 
     gfx->setCursor(8, TOPBAR_HEIGHT + 110);
     gfx->print("Uptime     : " + String(millis() / 1000) + " seconds");
@@ -214,7 +232,7 @@ static void drawStats() {
 
 static void drawDeviceInfo() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
 
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
@@ -258,6 +276,15 @@ static void init() {
 }
 
 static void tick() {
+    bool changed=false;
+    if(currentMode==MODE_FILES && fileTouch && !viewingFile) changed=fileGesture.tick();
+    else if(currentMode==MODE_MYAPPS && appsTouch) changed=appsGesture.tick();
+    else if(currentMode==MODE_MYAPPS_INSTALL && installTouch) changed=installGesture.tick();
+    static bool touchDirty=false;if(changed) touchDirty=true;
+    if(touchDirty && millis()-lastTouchFrame>=16) {
+        touchDirty=false;lastTouchFrame=millis();
+        if(currentMode==MODE_FILES) drawFiles();else if(currentMode==MODE_MYAPPS) drawMyApps();else if(currentMode==MODE_MYAPPS_INSTALL) drawInstallBrowser();
+    }
     if (currentMode == MODE_MENU && subSubMenu) {
         subSubMenu->tick();
         return;
@@ -265,6 +292,36 @@ static void tick() {
 }
 
 static void handleInput(const InputResult &in) {
+    TouchScroll *gesture=nullptr;bool *touch=nullptr;int rows=0,height=18,offset=0,top=TOPBAR_HEIGHT+22;
+    if(currentMode==MODE_FILES && !viewingFile) {gesture=&fileGesture;touch=&fileTouch;rows=files.size();offset=scrollTop*18;}
+    else if(currentMode==MODE_MYAPPS) {gesture=&appsGesture;touch=&appsTouch;rows=myApps.size();height=20;top=TOPBAR_HEIGHT+26;offset=myAppsScroll*20;}
+    else if(currentMode==MODE_MYAPPS_INSTALL) {gesture=&installGesture;touch=&installTouch;rows=installFiles.size();offset=installScrollTop*18;}
+    if(gesture) {
+        gesture->configure(rows,height,top,SCREEN_H-2);
+        if(in.type==InputEvent::TOUCH_DOWN) {if(!*touch) gesture->reset(offset);*touch=true;}
+        if(gesture->handle(in)) {
+            if(millis()-lastTouchFrame>=16) {lastTouchFrame=millis();if(currentMode==MODE_FILES) drawFiles();else if(currentMode==MODE_MYAPPS) drawMyApps();else drawInstallBrowser();}return;
+        }
+        if(in.type==InputEvent::NAV_UP || in.type==InputEvent::NAV_DOWN) *touch=false;
+    }
+    if (in.type == InputEvent::TOUCH_TAP) {
+        if (currentMode == MODE_MENU && subSubMenu) { subSubMenu->handleInput(in); return; }
+        if(currentMode==MODE_FILES && !viewingFile) {
+            int target=fileTouch?fileGesture.itemAt(in.y):scrollTop+(in.y-TOPBAR_HEIGHT-22)/18;
+            if(in.y<TOPBAR_HEIGHT+22 || target<0 || target>=int(files.size())) return;
+            sel=target;
+        } else if(currentMode==MODE_MYAPPS_INSTALL) {
+            int target=installTouch?installGesture.itemAt(in.y):installScrollTop+(in.y-TOPBAR_HEIGHT-22)/18;
+            if(in.y<TOPBAR_HEIGHT+22 || target<0 || target>=int(installFiles.size())) return;
+            installSel=target;
+        } else if(currentMode==MODE_MYAPPS) {
+            if(in.y<TOPBAR_HEIGHT+22) { InputResult right; right.type=InputEvent::NAV_RIGHT; handleInput(right); return; }
+            int target=appsTouch?appsGesture.itemAt(in.y):myAppsScroll+(in.y-TOPBAR_HEIGHT-26)/20;
+            if(in.y<TOPBAR_HEIGHT+26 || target<0 || target>=int(myApps.size())) return;
+            myAppsSel=target;
+        }
+        InputResult ok = in; ok.type = InputEvent::OK; handleInput(ok); return;
+    }
     if (currentMode == MODE_MENU) {
         if (in.type == InputEvent::BACK) {
             exitApp = true;

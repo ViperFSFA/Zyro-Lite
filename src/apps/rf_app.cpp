@@ -8,6 +8,7 @@
 #include "config.h"
 #include "audio.h"
 #include "menu.h"
+#include "touch_scroll.h"
 
 extern SPIClass *gSharedSPI;
 
@@ -160,7 +161,7 @@ static void doSweep() {
 
 static void drawSweep() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
 
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
@@ -200,7 +201,7 @@ static void drawSweep() {
 
 static void drawScope() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
 
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
@@ -234,6 +235,9 @@ static void drawScope() {
 static std::vector<String> savedFiles;
 static int savedSel = 0;
 static int savedScrollTop = 0;
+static TouchScroll captureGesture,savedGesture;
+static bool captureTouch=false,savedTouch=false;
+static uint32_t gestureFrame=0;
 static String savedInfoName;
 static String savedInfoPayload;
 static float savedInfoFreq = 0.0f;
@@ -476,7 +480,7 @@ static void drawCaptureWaterfall() {
 
 static void drawCapture() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
 
     if (!radioOk) {
         gfx->setTextColor(t.bad);
@@ -506,10 +510,12 @@ static void drawCapture() {
         if (foundSel < foundScrollTop) foundScrollTop = foundSel;
         if (foundSel >= foundScrollTop + visibleRows) foundScrollTop = foundSel - visibleRows + 1;
 
-        for (int row = 0; row < visibleRows; row++) {
-            int i = foundScrollTop + row;
-            if (i >= (int)foundList.size()) break;
-            int y = listTop + row * CAP_ROW_H;
+        captureGesture.configure(foundList.size(),CAP_ROW_H,listTop,SCREEN_H);
+        float offset=captureTouch?captureGesture.position:foundScrollTop*CAP_ROW_H;
+        uiBeginViewport(listTop,SCREEN_H);
+        int first=int(offset)/CAP_ROW_H;
+        for (int i=first;i<min(int(foundList.size()),first+visibleRows+2);i++) {
+            int y = listTop + i*CAP_ROW_H-int(offset);
             bool hi = (i == foundSel);
             const FoundCapture &fc = foundList[i];
 
@@ -524,6 +530,7 @@ static void drawCapture() {
             gfx->fillCircle(CAP_LIST_W - 16, y + 14, 4, rssiToColor565(fc.rssi));
         }
 
+        uiEndViewport();
         int n = (int)foundList.size();
         if (n > visibleRows) {
             int barX = CAP_LIST_W - 6;
@@ -539,7 +546,7 @@ static void drawCapture() {
 
 static void drawCaptureInfo() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -566,7 +573,7 @@ static void drawCaptureInfo() {
 
 static void drawCaptureSaveAs() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -586,7 +593,7 @@ static void drawCaptureSaveAs() {
 
 static void drawSaved() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -611,21 +618,24 @@ static void drawSaved() {
     int visibleRows = max(1, (SCREEN_H - TOPBAR_HEIGHT - 38) / 18);
     if (savedSel < savedScrollTop) savedScrollTop = savedSel;
     if (savedSel >= savedScrollTop + visibleRows) savedScrollTop = savedSel - visibleRows + 1;
-    for (int row = 0; row < visibleRows; row++) {
-        int i = savedScrollTop + row;
-        if (i >= (int)savedFiles.size()) break;
-        int y = TOPBAR_HEIGHT + 34 + row * 18;
+    savedGesture.configure(savedFiles.size(),18,TOPBAR_HEIGHT+34,SCREEN_H);
+    float offset=savedTouch?savedGesture.position:savedScrollTop*18;
+    uiBeginViewport(TOPBAR_HEIGHT+32,SCREEN_H);
+    int first=int(offset)/18;
+    for (int i=first;i<min(int(savedFiles.size()),first+visibleRows+2);i++) {
+        int y = TOPBAR_HEIGHT + 34 + i*18-int(offset);
         bool hi = (i == savedSel);
         if (hi) gfx->fillRect(4, y - 2, SCREEN_W - 8, 16, t.accent);
         gfx->setTextColor(hi ? t.accentFg : t.fg);
         gfx->setCursor(8, y);
         gfx->print(savedFiles[i]);
     }
+    uiEndViewport();
 }
 
 static void drawSavedInfo() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -708,7 +718,7 @@ static String fskLastPayloadHex = "(none)";
 
 static void drawFskRx() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -769,7 +779,7 @@ static void sendFskTestPacket() {
 
 static void drawFskTx() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -803,7 +813,7 @@ static const size_t FSK_LOG_MAX = 7;
 
 static void drawFskMonitor() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -927,7 +937,7 @@ static void pollBer() {
 
 static void drawFskBer() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -971,7 +981,7 @@ static void drawFskBer() {
 
 static void drawInfoStatus() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -1007,7 +1017,7 @@ static void drawInfoStatus() {
 
 static void drawInfoChip() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -1044,7 +1054,7 @@ static const int REG_LIST_COUNT = sizeof(REG_LIST) / sizeof(REG_LIST[0]);
 
 static void drawInfoRegdump() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -1154,7 +1164,7 @@ static void saveInfoSweepScan() {
 
 static void drawInfoSweep() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(4, TOPBAR_HEIGHT + 2);
@@ -1318,6 +1328,10 @@ static Menu *activeMenu() {
 }
 
 static void tick() {
+    static bool scrollDirty=false;
+    if(currentMode==MODE_CAPTURE && captureTouch && captureGesture.tick()) scrollDirty=true;
+    else if(currentMode==MODE_SAVED && savedTouch && savedGesture.tick()) scrollDirty=true;
+    if(scrollDirty && millis()-gestureFrame>=16) {gestureFrame=millis();scrollDirty=false;if(currentMode==MODE_CAPTURE) drawCapture();else if(currentMode==MODE_SAVED) drawSaved();}
     if (currentMode == MODE_MENU) {
         Menu *m = activeMenu();
         if (m) m->tick();
@@ -1358,6 +1372,28 @@ static void tick() {
 }
 
 static void handleInput(const InputResult &in) {
+    if(currentMode==MODE_CAPTURE || currentMode==MODE_SAVED) {
+        bool capture=currentMode==MODE_CAPTURE;
+        TouchScroll &gesture=capture?captureGesture:savedGesture;
+        bool &touch=capture?captureTouch:savedTouch;
+        gesture.configure(capture?int(foundList.size()):int(savedFiles.size()),capture?CAP_ROW_H:18,TOPBAR_HEIGHT+34,SCREEN_H);
+        if(in.type==InputEvent::TOUCH_DOWN && (!capture || in.x<CAP_LIST_W)) {if(!touch) gesture.reset((capture?foundScrollTop*CAP_ROW_H:savedScrollTop*18));touch=true;}
+        if(gesture.handle(in)) {if(millis()-gestureFrame>=16) {gestureFrame=millis();if(capture) drawCapture();else drawSaved();}return;}
+        if(in.type==InputEvent::NAV_UP || in.type==InputEvent::NAV_DOWN) touch=false;
+    }
+    if (in.type == InputEvent::TOUCH_TAP) {
+        if(currentMode==MODE_CAPTURE || currentMode==MODE_SAVED) {
+            bool capture=currentMode==MODE_CAPTURE;
+            if(capture && in.x>=CAP_LIST_W) return;
+            int target=capture?captureGesture.itemAt(in.y):savedGesture.itemAt(in.y);
+            if(target<0 || target>=(capture?int(foundList.size()):int(savedFiles.size()))) return;
+            if(capture) foundSel=target;else savedSel=target;
+        }
+        if (currentMode == MODE_MENU) { if (activeMenu()) activeMenu()->handleInput(in); return; }
+        if (currentMode == MODE_CAPTURE_ACTION && captureActionMenu) { captureActionMenu->handleInput(in); return; }
+        if (currentMode == MODE_CAPTURE_CONFIG && captureConfigMenu) { captureConfigMenu->handleInput(in); return; }
+        InputResult ok = in; ok.type = InputEvent::OK; handleInput(ok); return;
+    }
     if (currentMode == MODE_CAPTURE_SAVEAS && capSaveAsEditing) {
         if (in.type == InputEvent::CHAR) {
             if (capSaveAsBuf.length() < 40) capSaveAsBuf += in.ch;

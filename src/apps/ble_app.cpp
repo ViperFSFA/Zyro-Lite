@@ -2,6 +2,9 @@
 #include <NimBLEDevice.h>
 #include <NimBLEHIDDevice.h>
 #include "display.h"
+#include "battery.h"
+#include <algorithm>
+#include "touch_scroll.h"
 #include "settings.h"
 #include "config.h"
 #include "audio.h"
@@ -76,6 +79,9 @@ struct BleDevInfo {
 static std::vector<BleDevInfo> devList;
 static int sel = 0;
 static int scrollTop = 0;
+static TouchScroll deviceScroll;
+static bool deviceTouch=false;
+static uint32_t lastDeviceFrame=0;
 static volatile bool scanning = false;
 // scanJustFinished is only set from the BLE host task. It is cleared
 // exclusively from the main task in tick(). This flag must only ever be
@@ -129,7 +135,7 @@ static void setupHid() {
     hid->hidInfo(0x00, 0x01);
     hid->reportMap((uint8_t *)hidReportDescriptor, sizeof(hidReportDescriptor));
     hid->startServices();
-    hid->setBatteryLevel(100);
+    hid->setBatteryLevel(batteryPercent());
 
     NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
     adv->setAppearance(HID_KEYBOARD);
@@ -238,8 +244,9 @@ static void processScanResults() {
         }
         devList.push_back(info);
     }
+    std::sort(devList.begin(),devList.end(),[](const BleDevInfo &a,const BleDevInfo &b){return a.rssi>b.rssi;});
     sel = 0;
-    scrollTop = 0;
+    scrollTop = 0;deviceScroll.reset();deviceTouch=false;
 }
 
 static void doScan() {
@@ -253,54 +260,37 @@ static void doScan() {
     pScan->start(3, onScanComplete, false);
 }
 
-static void drawScanner() {
-    const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
-    gfx->setTextSize(1);
-    gfx->setTextColor(t.dim);
-    gfx->setCursor(8, TOPBAR_HEIGHT + 4);
-    gfx->print(scanning ? "Scanning BLE..."
-                         : (String(devList.size()) + " devices  (OK=rescan  BACK=menu)"));
-
-    int visibleRows = (SCREEN_H - TOPBAR_HEIGHT - 20) / 18;
-    for (int row = 0; row < visibleRows; row++) {
-        int i = scrollTop + row;
-        if (i >= (int)devList.size()) break;
-        int y = TOPBAR_HEIGHT + 22 + row * 18;
-        bool hi = (i == sel);
-        if (hi) gfx->fillRect(4, y - 2, SCREEN_W - 8, 16, t.accent);
-        gfx->setTextColor(hi ? t.accentFg : t.fg);
-        gfx->setCursor(8, y);
-        gfx->print(devList[i].name.substring(0, 14) + " " +
-                   String(devList[i].rssi) + "dBm " +
-                   devList[i].addr.substring(0, 11));
+static void drawDevices(bool beacon) {
+    const Theme &t=gSettings.theme(); uiAppSurface();
+    gfx->setTextColor(t.accent); gfx->setCursor(8,TOPBAR_HEIGHT+4);
+    gfx->print(beacon?"BLE / BEACONS":"BLE / DISCOVERY");
+    gfx->setTextColor(t.dim); gfx->setCursor(12,47);
+    gfx->print(String(devList.size())+" devices / tap selected to rescan");
+    if(devList.empty()) {
+        gfx->drawRoundRect(12,88,296,70,8,t.dim);
+        gfx->setCursor(24,108); gfx->print("No devices discovered");
+        gfx->setCursor(24,130); gfx->print("Tap to scan nearby devices");
     }
-}
-
-static void drawBeacon() {
-    const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
-    gfx->setTextSize(1);
-    gfx->setTextColor(t.accent);
-    gfx->setCursor(8, TOPBAR_HEIGHT + 4);
-    gfx->print(scanning ? "Scanning BLE..." : "BLE Beacon & Mfg Monitor");
-
-    int visibleRows = (SCREEN_H - TOPBAR_HEIGHT - 20) / 18;
-    for (int row = 0; row < visibleRows; row++) {
-        int i = scrollTop + row;
-        if (i >= (int)devList.size()) break;
-        int y = TOPBAR_HEIGHT + 22 + row * 18;
-        bool hi = (i == sel);
-        if (hi) gfx->fillRect(4, y - 2, SCREEN_W - 8, 16, t.accent);
-        gfx->setTextColor(hi ? t.accentFg : t.fg);
-        gfx->setCursor(8, y);
-        gfx->print(devList[i].addr.substring(0, 12) + " | " + devList[i].beaconInfo);
+    deviceScroll.configure(devList.size(),40,62,224);
+    float offset=deviceTouch?deviceScroll.position:scrollTop*40;
+    uiBeginViewport(62,224);
+    int first=int(offset)/40;
+    for(int i=first;i<min(int(devList.size()),first+6);i++) {
+        int y=62+i*40-int(offset); bool hi=i==sel;
+        gfx->fillRoundRect(6,y,308,36,7,hi?t.accent:t.topbarBg);
+        gfx->setTextColor(hi?t.accentFg:t.fg); gfx->setCursor(14,y+6);
+        gfx->print((devList[i].name.length()?devList[i].name:String("Unnamed device")).substring(0,30));
+        gfx->setCursor(14,y+23); gfx->setTextColor(hi?t.accentFg:t.dim);
+        gfx->print(beacon?devList[i].beaconInfo.substring(0,47):devList[i].addr+" / "+String(devList[i].rssi)+" dBm");
     }
+    uiEndViewport();
 }
+static void drawScanner() { drawDevices(false); }
+static void drawBeacon() { drawDevices(true); }
 
 static void drawHid() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -336,6 +326,10 @@ static void init() {
 }
 
 static void tick() {
+    if(deviceTouch && (currentMode==MODE_SCANNER || currentMode==MODE_BEACON)) {
+        static bool changed=false;if(deviceScroll.tick()) changed=true;
+        if(changed && millis()-lastDeviceFrame>=16) {changed=false;lastDeviceFrame=millis();drawDevices(currentMode==MODE_BEACON);}
+    }
     if (currentMode == MODE_MENU && subSubMenu) {
         subSubMenu->tick();
         return;
@@ -366,6 +360,25 @@ static void tick() {
 }
 
 static void handleInput(const InputResult &in) {
+    if(!scanning && (currentMode==MODE_SCANNER || currentMode==MODE_BEACON)) {
+        deviceScroll.configure(devList.size(),40,62,224);
+        if(in.type==InputEvent::TOUCH_DOWN) {if(!deviceTouch) deviceScroll.reset(scrollTop*40);deviceTouch=true;}
+        if(deviceScroll.handle(in)) {if(millis()-lastDeviceFrame>=16) {lastDeviceFrame=millis();drawDevices(currentMode==MODE_BEACON);}return;}
+        if(in.type==InputEvent::NAV_UP || in.type==InputEvent::NAV_DOWN) deviceTouch=false;
+    }
+    if (in.type == InputEvent::TOUCH_TAP) {
+        if (currentMode == MODE_MENU && subSubMenu) { subSubMenu->handleInput(in); return; }
+        if (currentMode==MODE_SCANNER || currentMode==MODE_BEACON) {
+            if(scanning) return;
+            int row=deviceTouch?deviceScroll.itemAt(in.y)-scrollTop:(in.y-62)/40;
+            if(!devList.empty()) {
+                if(in.y<62 || in.y>=224 || scrollTop+row<0 || scrollTop+row>=int(devList.size())) return;
+                int target=scrollTop+row;
+                if(target!=sel) { sel=target; if(currentMode==MODE_SCANNER) drawScanner(); else drawBeacon(); return; }
+            }
+        }
+        InputResult ok = in; ok.type = InputEvent::OK; handleInput(ok); return;
+    }
     if (currentMode == MODE_MENU) {
         if (in.type == InputEvent::BACK) {
             exitApp = true;
@@ -411,7 +424,7 @@ static void handleInput(const InputResult &in) {
     if (scanning) return;
 
     if (currentMode == MODE_SCANNER || currentMode == MODE_BEACON) {
-        int visibleRows = (SCREEN_H - TOPBAR_HEIGHT - 20) / 18;
+        int visibleRows = 4;
         if (in.type == InputEvent::NAV_UP) {
             if (sel > 0) {
                 sel--;
@@ -478,4 +491,12 @@ static bool wantsExit() { return exitApp; }
 
 AppModule bleAppGet() {
     return { BleApp::init, BleApp::tick, BleApp::handleInput, BleApp::onExit, BleApp::wantsExit };
+}
+
+bool bleOpenTool(const String &tool) {
+    using namespace BleApp;
+    if(tool=="scan") { currentMode=MODE_SCANNER;doScan();return true; }
+    if(tool=="monitor") { currentMode=MODE_BEACON;doScan();return true; }
+    if(tool=="control") { currentMode=MODE_HID;enterHidMode();drawHid();return true; }
+    return false;
 }

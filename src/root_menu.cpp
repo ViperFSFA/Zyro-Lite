@@ -1,3 +1,4 @@
+#include "display.h"
 #include "menu.h"
 #include "app_api.h"
 #include "config.h"
@@ -12,6 +13,7 @@
 #include "money_64_64_28f.h"       // Games
 #include "add_folder_64_64_28f.h"  // Apps (file browser)
 #include "ble_64_64_28f.h"         // BLE (converted from a static bitmap - all frames identical)
+#include "computer_display_64_64_28f.h"
 #include "tune_64_64_28f.h"        // GPIO / Tuning
 
 extern AppModule *gActiveApp; // defined in main.cpp
@@ -22,6 +24,7 @@ static Menu *root = nullptr;
 static void launch(int idx);
 
 void rootMenuInit() {
+    displaySetContext("HOME");
     // BUGFIX: previously this allocated a new Menu every time the launcher
     // was re-entered (i.e. every time an app exited) without ever freeing
     // the old one, leaking heap on every app exit until the device eventually
@@ -44,6 +47,7 @@ void rootMenuInit() {
         { "GPS",       "GP", [](){ launch(5); }, compass_64_64_28f_frames, ICON_FRAME_COUNT },
         { "GPIO",      "IO", [](){ launch(9); }, tune_64_64_28f_frames, ICON_FRAME_COUNT },
         { "Ethernet",  "EN", [](){ launch(6); }, connect_64_64_28f_frames, ICON_FRAME_COUNT },
+        { "Command prompt", "CP", [](){ launch(11); }, computer_display_64_64_28f_frames, ICON_FRAME_COUNT },
         { "Games",     "GM", [](){ launch(7); }, money_64_64_28f_frames, ICON_FRAME_COUNT },
         { "Apps",      "AP", [](){ launch(8); }, add_folder_64_64_28f_frames, ICON_FRAME_COUNT },
         { "Settings",  "ST", [](){ launch(0); }, gears_64_64_28f_frames, ICON_FRAME_COUNT },
@@ -53,6 +57,8 @@ void rootMenuInit() {
 }
 
 static void launch(int idx) {
+    static const char *labels[]={"SETTINGS","WI-FI","BLUETOOTH","LORA","RADIO","GPS","ETHERNET","GAMES","APPS","GPIO","CUSTOM APP","CONSOLE"};
+    displaySetContext(labels[idx]);
     gActiveApp = &gAppTable[idx];
     gActiveApp->init();
 }

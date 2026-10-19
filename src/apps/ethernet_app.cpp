@@ -25,7 +25,7 @@ static uint32_t pingsRecv = 0;
 
 static void drawStatus() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
 
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
@@ -66,7 +66,7 @@ static void drawStatus() {
 
 static void drawPing() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
 
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
@@ -108,9 +108,7 @@ static void drawPing() {
 
 static void sendPing() {
     pingsSent++;
-    // If a live adapter is connected and link is up, count as received.
-    // Otherwise the packet is lost (no adapter / link down).
-    if (linkUp && adapterConnected) pingsRecv++;
+    // No ICMP transport is wired here yet. Never claim a reply based on link state.
 }
 
 static void init() {
@@ -136,6 +134,10 @@ static void tick() {
 }
 
 static void handleInput(const InputResult &in) {
+    if (in.type == InputEvent::TOUCH_TAP) {
+        if (currentMode == MODE_MENU && subSubMenu) { subSubMenu->handleInput(in); return; }
+        InputResult ok = in; ok.type = InputEvent::OK; handleInput(ok); return;
+    }
     if (currentMode == MODE_MENU) {
         if (in.type == InputEvent::BACK) {
             exitApp = true;

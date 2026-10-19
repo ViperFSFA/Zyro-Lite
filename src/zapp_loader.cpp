@@ -438,7 +438,9 @@ static void zrTick() {
 
 static void zrHandleInput(const InputResult &in) {
     if (!gAppLoaded || gExitRequested || !gLoaded.handleInput) return;
-    ZyroInput z = mapInput(in);
+    InputResult mapped = in;
+    if (mapped.type == InputEvent::TOUCH_TAP) mapped.type = InputEvent::OK;
+    ZyroInput z = mapInput(mapped);
     // handleInput takes an argument, so it can't go through the plain
     // void(*)() signature callGuarded() expects - inline the same guard here.
     if (setjmp(gZappJumpBuf) != 0) {

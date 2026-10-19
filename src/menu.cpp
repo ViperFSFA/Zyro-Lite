@@ -3,9 +3,10 @@
 #include "settings.h"
 #include "config.h"
 #include "audio.h"
+#include <cstring>
 
 Menu::Menu(const char *title_, std::vector<MenuItem> items_)
-    : title(title_), items(items_) {}
+    : title(title_), items(items_) { touchScroll.configure(items.size(),ROW_HEIGHT,TOPBAR_HEIGHT+2,SCREEN_H-2); }
 
 int Menu::visibleRows() const {
     // Available height = screen minus topbar minus a small bottom margin
@@ -49,7 +50,7 @@ static void drawIconFrame(int x, int y, const uint8_t *frame, uint16_t color) {
 
 void Menu::drawRow(int index, int screenRow, bool isHighlighted) {
     const Theme &t = gSettings.theme();
-    int y = TOPBAR_HEIGHT + 2 + screenRow * ROW_HEIGHT;
+    int y = TOPBAR_HEIGHT + 2 + screenRow * ROW_HEIGHT - pixelShift;
 
     if (isHighlighted) {
         if (gSettings.highlightStyle == HIGHLIGHT_OUTLINE) {
@@ -87,7 +88,7 @@ void Menu::drawRow(int index, int screenRow, bool isHighlighted) {
         // image".
         int frame = 0;
         if (isHighlighted) {
-            frame = (millis() / ICON_FRAME_MS) % item.iconFrameCount;
+            frame = (millis() / (strcmp(item.label,"Command prompt")==0 ? 42 : ICON_FRAME_MS)) % item.iconFrameCount;
         }
         uint16_t iconColor = isHighlighted ? t.accentFg : t.fg;
         int iconY = y + (ROW_HEIGHT - 4 - ICON_RENDER_SIZE) / 2;
@@ -165,7 +166,7 @@ void Menu::drawGlidingHighlight() {
     int shownScreenRow = shownIndex - scrollOffset;
     if (shownScreenRow >= 0 && shownScreenRow < vis && shownIndex >= 0 && shownIndex < (int)items.size()) {
         const MenuItem &item = items[shownIndex];
-        int textY = TOPBAR_HEIGHT + 2 + shownScreenRow * ROW_HEIGHT;
+        int textY = y;
         int textX = 16;
         gfx->setTextColor(t.accentFg);
         gfx->setFont(UI_FONT);
@@ -203,6 +204,7 @@ void Menu::drawAnimatingFrame() {
 
     int lo = min(prevScreenRow, currScreenRow);
     int hi = max(prevScreenRow, currScreenRow);
+    gfx->fillRect(0, TOPBAR_HEIGHT + 2 + lo * ROW_HEIGHT, SCREEN_W, (hi-lo+1)*ROW_HEIGHT, gSettings.theme().bg);
     for (int screenRow = lo; screenRow <= hi; screenRow++) {
         drawRow(scrollOffset + screenRow, screenRow, false); // pill drawn on top below
     }
@@ -229,11 +231,21 @@ void Menu::drawScrollbar() {
 
     // Thumb
     int thumbH = max(8, barAreaH * vis / n);
-    int thumbY = barAreaTop + (barAreaH - thumbH) * scrollOffset / (n - vis);
+    int thumbY = touchLayout && touchScroll.limit()>0 ? barAreaTop+int((barAreaH-thumbH)*touchScroll.position/touchScroll.limit()) : barAreaTop + (barAreaH - thumbH) * scrollOffset / (n - vis);
     gfx->fillRoundRect(barX, thumbY, barW, thumbH, 1, t.accent);
 }
 
 void Menu::draw() {
+    if(touchLayout) {
+        uiBeginViewport(TOPBAR_HEIGHT,SCREEN_H);
+        gfx->fillRect(0,TOPBAR_HEIGHT,SCREEN_W,SCREEN_H-TOPBAR_HEIGHT,gSettings.theme().bg);
+        scrollOffset=int(touchScroll.position)/ROW_HEIGHT;
+        pixelShift=int(touchScroll.position)%ROW_HEIGHT;
+        for(int i=scrollOffset;i<min(int(items.size()),scrollOffset+visibleRows()+2);i++)
+            drawRow(i,i-scrollOffset,i==current);
+        pixelShift=0;
+        uiEndViewport(); drawScrollbar(); needsRedraw=false; return;
+    }
     const Theme &t = gSettings.theme();
 
     // Clear the menu area
@@ -261,6 +273,16 @@ void Menu::draw() {
 }
 
 void Menu::tick() {
+    if(touchLayout) {
+        bool moving=touchScroll.tick();
+        if(moving) needsRedraw=true;
+        if(!touchScroll.dragging && current<int(items.size()) && items[current].iconFrames && millis()-lastIconFrameMs>=42) {lastIconFrameMs=millis();needsRedraw=true;}
+        if(millis()-lastTouchFrame>=16 && (moving || needsRedraw)) {
+            lastTouchFrame=millis(); draw();
+            displayFlushDirtyRows(TOPBAR_HEIGHT,SCREEN_H);
+        }
+        return;
+    }
     // Keep the currently-selected row's bitmap icon animating even when
     // there's no navigation happening. but only do the extra redraw work if
     // that row actually has an animated icon, so menus with plain text/glyph
@@ -273,7 +295,8 @@ void Menu::tick() {
     if (!animating && !needsRedraw && !iconAnimating) return;
 
     if (iconAnimating && !animating && !needsRedraw) {
-        if (millis() - lastIconFrameMs < ICON_FRAME_MS) return;
+        uint32_t interval=strcmp(items[current].label,"Command prompt")==0?42:ICON_FRAME_MS;
+        if (millis() - lastIconFrameMs < interval) return;
         lastIconFrameMs = millis();
         // Same deal as drawAnimatingFrame. just the one row, not draw().
         int screenRow = current - scrollOffset;
@@ -312,6 +335,20 @@ void Menu::handleInput(const InputResult &in) {
     int n = items.size();
     if (n == 0) return;
 
+    if(in.type==InputEvent::TOUCH_DOWN || in.type==InputEvent::TOUCH_MOVE || in.type==InputEvent::TOUCH_UP || in.type==InputEvent::TOUCH_TAP) {
+        if(!touchLayout) { touchScroll.reset(scrollOffset*ROW_HEIGHT); touchLayout=true; animating=false; }
+        bool consumed=touchScroll.handle(in);
+        needsRedraw=true;
+        if(in.type==InputEvent::TOUCH_TAP && !consumed) {
+            int target=touchScroll.itemAt(in.y);
+            if(target>=0 && target<n) {
+                current=target; draw(); audioClickOk();
+                if(items[current].onEnter) items[current].onEnter();
+            }
+        }
+        return;
+    }
+    if(in.type!=InputEvent::NONE) { touchLayout=false; pixelShift=0; touchScroll.reset(); }
     switch (in.type) {
         case InputEvent::NAV_UP:
         case InputEvent::NAV_LEFT: {

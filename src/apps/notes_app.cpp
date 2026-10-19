@@ -168,7 +168,7 @@ static std::vector<String> wrapText(const String &text, int maxChars) {
 
 static void drawEdit() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(6, TOPBAR_HEIGHT + 2);
@@ -215,6 +215,10 @@ static void tick() {
 }
 
 static void handleInput(const InputResult &in) {
+    if (in.type == InputEvent::TOUCH_TAP) {
+        if (currentMode == MODE_LIST && listMenu) { listMenu->handleInput(in); return; }
+        InputResult ok = in; ok.type = InputEvent::OK; handleInput(ok); return;
+    }
     if (currentMode == MODE_LIST) {
         if (in.type == InputEvent::BACK) {
             exitApp = true;

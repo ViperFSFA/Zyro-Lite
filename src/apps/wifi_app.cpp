@@ -9,6 +9,7 @@
 #include "audio.h"
 #include "menu.h"
 #include "overlay.h"
+#include "touch_scroll.h"
 
 namespace WifiApp {
 
@@ -30,6 +31,9 @@ static Menu *subSubMenu = nullptr;
 // Scanner state
 static int netCount = 0;
 static int scrollTop = 0;
+static TouchScroll networkScroll;
+static bool networkTouch=false;
+static uint32_t lastNetworkFrame=0;
 static int sel = 0;
 static bool scanning = false;
 static bool scanPending = false; // true while an async WiFi.scanNetworks() is in flight
@@ -134,7 +138,7 @@ static void pollScan() {
     });
 
     sel = 0;
-    scrollTop = 0;
+    scrollTop = 0;networkScroll.reset();networkTouch=false;
 
     // Redraw whichever screen actually asked for this scan, now that results
     // are in (the loading overlay was covering it a moment ago).
@@ -185,59 +189,49 @@ static const char *signalWord(int rssi) {
     return "Weak";
 }
 
-static void drawScanner() {
+static const int NETWORK_ROWS = 4;
+static const int NETWORK_TOP = TOPBAR_HEIGHT + 32;
+static const int NETWORK_H = 40;
+static void drawNetworks(bool connectList) {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
-    gfx->setTextSize(1);
-    gfx->setTextColor(t.dim);
-    gfx->setCursor(8, TOPBAR_HEIGHT + 4);
-    gfx->print(scanning ? "Scanning Wi-Fi..." : String(netCount) + " APs  (SPACE=rescan, BACK=menu)");
-
-    int visibleRows = (SCREEN_H - TOPBAR_HEIGHT - 20) / 18;
-    for (int row = 0; row < visibleRows; row++) {
-        int i = scrollTop + row;
-        if (i >= netCount) break;
-        int y = TOPBAR_HEIGHT + 22 + row * 18;
-        bool hi = (i == sel);
-        if (hi) gfx->fillRect(4, y - 2, SCREEN_W - 8, 16, t.accent);
-        gfx->setTextColor(hi ? t.accentFg : t.fg);
-        gfx->setCursor(8, y);
-
-        String enc = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "OPEN" : "SEC";
-        gfx->print(String(WiFi.SSID(i)).substring(0, 15) + " ch" + String(WiFi.channel(i)) +
-                    " " + String(WiFi.RSSI(i)) + "dBm " + enc);
+    gfx->setFont(NULL); gfx->setTextSize(1); gfx->setTextWrap(false);
+    gfx->fillRect(0,TOPBAR_HEIGHT,SCREEN_W,SCREEN_H-TOPBAR_HEIGHT,t.bg);
+    gfx->setTextColor(t.accent); gfx->setCursor(12,TOPBAR_HEIGHT+6);
+    gfx->print(connectList ? "JOIN NETWORK" : "ACCESS POINTS");
+    gfx->setTextColor(t.dim); gfx->setCursor(12,TOPBAR_HEIGHT+19);
+    gfx->print(String(netCount)+" found / strongest first");
+    gfx->setCursor(12,224); gfx->print(connectList ? "Tap to join / swipe to browse" : "Tap selected to rescan / swipe to browse");
+    if (!netCount) {
+        gfx->drawRoundRect(12,86,296,88,10,t.dim);
+        gfx->setTextColor(t.fg); gfx->setCursor(28,107); gfx->print("No access points found");
+        gfx->setTextColor(t.dim); gfx->setCursor(28,129); gfx->print("Tap to run a fresh scan");
+        return;
     }
-}
-
-static void drawConnectList() {
-    const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
-    gfx->setTextSize(1);
-    gfx->setTextColor(t.dim);
-    gfx->setCursor(8, TOPBAR_HEIGHT + 4);
-    gfx->print(scanning ? "Scanning Wi-Fi..." : String(netCount) + " networks, strongest first  (OK=connect)");
-
-    int visibleRows = (SCREEN_H - TOPBAR_HEIGHT - 20) / 18;
-    for (int row = 0; row < visibleRows; row++) {
-        int listPos = scrollTop + row;
-        if (listPos >= netCount) break;
-        int i = sortedOrder[listPos];
-        int y = TOPBAR_HEIGHT + 22 + row * 18;
-        bool hi = (listPos == sel);
-        if (hi) gfx->fillRect(4, y - 2, SCREEN_W - 8, 16, t.accent);
-        gfx->setTextColor(hi ? t.accentFg : t.fg);
-        gfx->setCursor(8, y);
-
-        String enc = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "OPEN" : "SEC";
-        int rssi = WiFi.RSSI(i);
-        gfx->print(String(WiFi.SSID(i)).substring(0, 14) + " " + signalWord(rssi) +
-                    " (" + String(rssi) + "dBm) " + enc);
+    networkScroll.configure(netCount,NETWORK_H,NETWORK_TOP,220);
+    float offset=networkTouch?networkScroll.position:scrollTop*NETWORK_H;
+    uiBeginViewport(NETWORK_TOP,220);
+    int first=int(offset)/NETWORK_H;
+    for (int pos=first; pos<min(netCount,first+NETWORK_ROWS+2); ++pos) {
+        int i=sortedOrder[pos], y=NETWORK_TOP+pos*NETWORK_H-int(offset);
+        bool hi=pos==sel;
+        gfx->fillRoundRect(6,y,308,36,7,hi?t.accent:t.topbarBg);
+        uint16_t fg=hi?t.accentFg:t.fg;
+        gfx->setTextColor(fg); gfx->setCursor(14,y+6);
+        String name=WiFi.SSID(i); if (!name.length()) name="Hidden network";
+        gfx->print(name.substring(0,31));
+        gfx->setTextColor(hi?t.accentFg:t.dim); gfx->setCursor(14,y+23);
+        gfx->print(String(WiFi.RSSI(i))+" dBm / CH "+String(WiFi.channel(i))+" / "+(WiFi.encryptionType(i)==WIFI_AUTH_OPEN?"OPEN":"SECURED"));
+        int bars=constrain(map(WiFi.RSSI(i),-100,-40,1,5),1L,5L);
+        for(int j=0;j<5;j++) gfx->fillRect(278+j*5,y+29-j*3,3,3+j*3,j<bars?fg:t.dim);
     }
+    uiEndViewport();
 }
+static void drawScanner() { drawNetworks(false); }
+static void drawConnectList() { drawNetworks(true); }
 
 static void drawConnectForm() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -275,7 +269,7 @@ static void drawConnectForm() {
 
 static void drawConnectResult() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.ok);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -306,7 +300,7 @@ static void drawConnectResult() {
 
 static void drawSpectrum() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -338,7 +332,7 @@ static void drawSpectrum() {
 
 static void drawMonitor() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -373,7 +367,7 @@ static void drawMonitor() {
 
 static void drawNeedsConnection(const char *title) {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -392,7 +386,7 @@ static void drawNeedsConnection(const char *title) {
 
 static void drawPacketMonitor() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -533,7 +527,7 @@ static void stopBeaconSpam() {
 
 static void drawBeaconSpam() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -581,6 +575,11 @@ static void init() {
 }
 
 static void tick() {
+    if(networkTouch && (currentMode==MODE_SCANNER || currentMode==MODE_CONNECT_LIST)) {
+        static bool changed=false;
+        if(networkScroll.tick()) changed=true;
+        if(changed && millis()-lastNetworkFrame>=16) { changed=false;lastNetworkFrame=millis();drawNetworks(currentMode==MODE_CONNECT_LIST); }
+    }
     pollScan();
     pollConnect();
 
@@ -631,6 +630,33 @@ static void tick() {
 }
 
 static void handleInput(const InputResult &in) {
+    if(!scanPending && !connecting && (currentMode==MODE_SCANNER || currentMode==MODE_CONNECT_LIST)) {
+        networkScroll.configure(netCount,NETWORK_H,NETWORK_TOP,220);
+        if(in.type==InputEvent::TOUCH_DOWN) { if(!networkTouch) networkScroll.reset(scrollTop*NETWORK_H);networkTouch=true; }
+        if(networkScroll.handle(in)) { if(millis()-lastNetworkFrame>=16) {lastNetworkFrame=millis();drawNetworks(currentMode==MODE_CONNECT_LIST);} return; }
+        if(in.type==InputEvent::NAV_UP || in.type==InputEvent::NAV_DOWN) networkTouch=false;
+    }
+    if (in.type == InputEvent::TOUCH_TAP) {
+        if (scanPending || connecting) return;
+        if (currentMode == MODE_MENU) { if (subSubMenu) subSubMenu->handleInput(in); return; }
+        if (currentMode == MODE_SCANNER || currentMode == MODE_CONNECT_LIST) {
+            if (!netCount) { doScan(); return; }
+            int row=networkTouch?networkScroll.itemAt(in.y)-scrollTop:(in.y-NETWORK_TOP)/NETWORK_H;
+            if (netCount && (in.y<NETWORK_TOP || in.y>=220 || row+scrollTop<0 || row+scrollTop>=netCount)) return;
+            int target=scrollTop+row;
+            if (netCount && currentMode==MODE_SCANNER && target!=sel) { sel=target; drawScanner(); return; }
+            if(netCount) sel=target;
+        } else if (currentMode == MODE_CONNECT_FORM && !formEditing) {
+            int row=(in.y-(TOPBAR_HEIGHT+30))/26;
+            if(in.y<TOPBAR_HEIGHT+30 || row>2) return;
+            formSel=row;
+        } else if (currentMode == MODE_CONNECT_RESULT) {
+            if(in.y<TOPBAR_HEIGHT+72 || in.y>TOPBAR_HEIGHT+120) return;
+            resultSel=in.y<TOPBAR_HEIGHT+98?0:1;
+        }
+        InputResult ok=in; ok.type=InputEvent::OK; handleInput(ok); return;
+    }
+
     // Password text entry intercepts input before anything else below.
     // while typing, BACK means "erase a character" (or "cancel the edit" once
     // the field is already empty), not "leave this screen", which is
@@ -686,7 +712,7 @@ static void handleInput(const InputResult &in) {
     }
 
     if (currentMode == MODE_CONNECT_LIST) {
-        int visibleRows = (SCREEN_H - TOPBAR_HEIGHT - 20) / 18;
+        int visibleRows = NETWORK_ROWS;
         if (scanPending) return;
         if (in.type == InputEvent::NAV_UP) {
             if (sel > 0) { sel--; if (sel < scrollTop) scrollTop = sel; audioClickNav(); drawConnectList(); }
@@ -750,7 +776,7 @@ static void handleInput(const InputResult &in) {
             }
         }
     } else if (currentMode == MODE_SCANNER) {
-        int visibleRows = (SCREEN_H - TOPBAR_HEIGHT - 20) / 18;
+        int visibleRows = NETWORK_ROWS;
         if (scanPending) return; // ignore nav/rescan while results aren't in yet
         if (in.type == InputEvent::NAV_UP) {
             if (sel > 0) { sel--; if (sel < scrollTop) scrollTop = sel; audioClickNav(); drawScanner(); }
@@ -811,4 +837,12 @@ static bool wantsExit() { return exitApp; }
 
 AppModule wifiAppGet() {
     return { WifiApp::init, WifiApp::tick, WifiApp::handleInput, WifiApp::onExit, WifiApp::wantsExit };
+}
+
+bool wifiOpenTool(const String &tool) {
+    using namespace WifiApp;
+    if(tool=="spect") { currentMode=MODE_SPECTRUM;doScan();return true; }
+    if(tool=="spam") { currentMode=MODE_BEACON_SPAM;startBeaconSpam();drawBeaconSpam();return true; }
+    if(tool=="scan") { currentMode=MODE_SCANNER;doScan();return true; }
+    return false;
 }

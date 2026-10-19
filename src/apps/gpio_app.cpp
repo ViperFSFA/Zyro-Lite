@@ -9,6 +9,7 @@
 #include "config.h"
 #include "audio.h"
 #include "menu.h"
+#include "touch_scroll.h"
 
 extern SPIClass *gSharedSPI;
 
@@ -131,7 +132,7 @@ static void nrfSetup() {
 
 static void drawNrf24() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -177,7 +178,7 @@ static void ccSetup() {
 
 static void drawCc1101() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -208,7 +209,7 @@ static void drawCc1101() {
 
 static void drawReadGpio() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -245,9 +246,13 @@ static void customApplyAll(bool allOff) {
     }
 }
 
+static int customScroll = 0;
+static TouchScroll customGesture;
+static bool customTouch=false;
+static uint32_t customFrame=0;
 static void drawCustom() {
     const Theme &t = gSettings.theme();
-    gfx->fillRect(0, TOPBAR_HEIGHT, SCREEN_W, SCREEN_H - TOPBAR_HEIGHT, t.bg);
+    uiAppSurface();
     gfx->setTextSize(1);
     gfx->setTextColor(t.accent);
     gfx->setCursor(8, TOPBAR_HEIGHT + 4);
@@ -261,9 +266,15 @@ static void drawCustom() {
         return;
     }
 
-    for (size_t i = 0; i < n && i < 16; i++) {
+    if(customSel<customScroll) customScroll=customSel;
+    if(customSel>=customScroll+7) customScroll=customSel-6;
+    customGesture.configure(min(int(n),16),22,TOPBAR_HEIGHT+26,220);
+    float offset=customTouch?customGesture.position:customScroll*22;
+    uiBeginViewport(TOPBAR_HEIGHT+24,220);
+    int first=int(offset)/22;
+    for (size_t i = first; i < n && i < 16 && i < size_t(first+10); i++) {
         int pin = dynamicCustomPins[i];
-        int y = TOPBAR_HEIGHT + 26 + i * 22;
+        int y = TOPBAR_HEIGHT + 26 + i*22-int(offset);
         bool hi = ((int)i == customSel);
         if (hi) gfx->fillRect(4, y - 2, SCREEN_W - 8, 18, t.accent);
         gfx->setTextColor(hi ? t.accentFg : t.fg);
@@ -271,6 +282,7 @@ static void drawCustom() {
         gfx->print("GPIO " + String(pin) + ": " + (customPinOn[i] ? "HIGH (driving)" : "off"));
     }
 
+    uiEndViewport();
     gfx->setTextColor(t.warn);
     gfx->setCursor(8, SCREEN_H - 16);
     gfx->print("All pins snap back off when you exit this app.");
@@ -293,6 +305,9 @@ static void init() {
 }
 
 static void tick() {
+    static bool gestureDirty=false;
+    if(currentMode==MODE_CUSTOM && customTouch && customGesture.tick()) gestureDirty=true;
+    if(gestureDirty && millis()-customFrame>=16) {customFrame=millis();gestureDirty=false;drawCustom();}
     if (currentMode == MODE_MENU && subSubMenu) {
         subSubMenu->tick();
         return;
@@ -310,6 +325,21 @@ static void tick() {
 }
 
 static void handleInput(const InputResult &in) {
+    if(currentMode==MODE_CUSTOM) {
+        customGesture.configure(min(int(dynamicCustomPins.size()),16),22,TOPBAR_HEIGHT+26,220);
+        if(in.type==InputEvent::TOUCH_DOWN) {if(!customTouch) customGesture.reset(customScroll*22);customTouch=true;}
+        if(customGesture.handle(in)) {if(millis()-customFrame>=16) {customFrame=millis();drawCustom();}return;}
+        if(in.type==InputEvent::NAV_UP || in.type==InputEvent::NAV_DOWN) customTouch=false;
+    }
+    if (in.type == InputEvent::TOUCH_TAP) {
+        if (currentMode == MODE_MENU && subSubMenu) { subSubMenu->handleInput(in); return; }
+        if(currentMode==MODE_CUSTOM) {
+            int target=customTouch?customGesture.itemAt(in.y):customScroll+(in.y-TOPBAR_HEIGHT-26)/22;
+            if(in.y<TOPBAR_HEIGHT+26 || in.y>=220 || target<0 || target>=min(int(dynamicCustomPins.size()),16)) return;
+            customSel=target;
+        }
+        InputResult ok = in; ok.type = InputEvent::OK; handleInput(ok); return;
+    }
     if (currentMode == MODE_MENU) {
         if (in.type == InputEvent::BACK) {
             exitApp = true;

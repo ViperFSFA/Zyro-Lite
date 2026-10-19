@@ -10,12 +10,15 @@ enum class InputEvent {
     OK,          // trackball click OR SPACE
     BACK,        // ESC / Backspace
     CHAR,        // printable character available in .ch
+    TOUCH_TAP, TOUCH_DOWN, TOUCH_MOVE, TOUCH_UP,
     CURSOR_MOVE  // only emitted when trackballCursor mode is on: .dx/.dy filled
 };
 
 struct InputResult {
     InputEvent type = InputEvent::NONE;
     char ch = 0;
+    int x = 0;
+    int y = 0;
     int dx = 0;
     int dy = 0;
 };
@@ -35,3 +38,5 @@ void inputSetTextEntryMode(bool on);
 // Confirmed against LilyGO's own keyboard firmware: register 0x01
 // (LILYGO_KB_BRIGHTNESS_CMD) takes a brightness value 0-255, 0 = off.
 void keyboardSetBacklight(bool on);
+
+bool inputTouchAvailable();

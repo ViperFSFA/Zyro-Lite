@@ -4,6 +4,7 @@
 #include <vector>
 #include "input.h"
 #include "config.h"
+#include "touch_scroll.h"
 
 // FYI: iconFrames/iconFrameCount are intentionally the LAST two fields,
 // after onEnter. Every existing call site across the app files brace-inits a
@@ -40,6 +41,10 @@ private:
     const char *title;
     std::vector<MenuItem> items;
 
+    TouchScroll touchScroll;
+    bool touchLayout = false;
+    int pixelShift = 0;
+    uint32_t lastTouchFrame = 0;
     int current = 0;
     int previous = 0;
     int scrollOffset = 0;       // first visible item index

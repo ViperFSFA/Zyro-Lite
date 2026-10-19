@@ -19,3 +19,11 @@ AppModule gamesAppGet();
 AppModule filesAppGet();
 AppModule settingsAppGet();
 AppModule gpioAppGet();
+
+AppModule commandAppGet();
+void commandResume();
+void appRequestTool(int appIndex,const String &tool);
+bool wifiOpenTool(const String &tool);
+bool bleOpenTool(const String &tool);
+bool loraOpenTool(const String &tool);
+int loraModuleHealth();

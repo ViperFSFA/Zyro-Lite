@@ -1,6 +1,9 @@
 #include "settings.h"
 #include <SD.h>
 #include "config.h"
+#include <cstdlib>
+#include <cerrno>
+#include <climits>
 
 Settings gSettings;
 
@@ -22,12 +25,18 @@ static bool parseLine(const String &line, String &key, String &value) {
 
 static int toInt(const String &v, int def) {
     if (v.length() == 0) return def;
-    return v.toInt();
+    char *end = nullptr;
+    errno = 0;
+    long number = strtol(v.c_str(), &end, 10);
+    if (errno || end == v.c_str() || *end || number < INT_MIN || number > INT_MAX) return def;
+    return (int)number;
 }
 
 static bool toBool(const String &v, bool def) {
     if (v.length() == 0) return def;
-    return v == "1" || v.equalsIgnoreCase("true") || v.equalsIgnoreCase("on");
+    if (v == "1" || v.equalsIgnoreCase("true") || v.equalsIgnoreCase("on")) return true;
+    if (v == "0" || v.equalsIgnoreCase("false") || v.equalsIgnoreCase("off")) return false;
+    return def;
 }
 
 void settingsLoad() {
@@ -46,13 +55,19 @@ void settingsLoad() {
         String key, value;
         if (!parseLine(line, key, value)) continue;
 
-        if (key == "theme")          gSettings.themeId          = (uint8_t)toInt(value, THEME_BLACK);
+        if (key == "theme")          gSettings.themeId          = (uint8_t)constrain(toInt(value, THEME_BLACK), 0, THEME_COUNT-1);
         else if (key == "handed")    gSettings.handedness        = (uint8_t)toInt(value, HAND_RIGHT);
         else if (key == "tb_cursor") gSettings.trackballCursor   = toBool(value, false);
+        else if (key == "nickname") {
+            String safe; for(size_t i=0;i<value.length() && safe.length()<16;i++) { char c=value[i];if(isalnum((unsigned char)c)||c=='_'||c=='-') safe+=c; }
+            if(safe.length()) safe.toCharArray(gSettings.consoleNickname,sizeof(gSettings.consoleNickname));
+        }
+        else if (key == "touch") gSettings.touchEnabled = toBool(value, true);
+        else if (key == "enable_boot_log") gSettings.enableBootLog = toBool(value, false);
         else if (key == "sound")     gSettings.soundEnabled      = toBool(value, false);
         else if (key == "batt_saver")gSettings.batterySaver      = toBool(value, false);
-        else if (key == "screen_timeout") gSettings.screenTimeoutSec = (uint16_t)toInt(value, 60);
-        else if (key == "bright")    gSettings.brightness        = (uint8_t)toInt(value, 200);
+        else if (key == "screen_timeout") gSettings.screenTimeoutSec = (uint16_t)constrain(toInt(value, 60), 0, 3600);
+        else if (key == "bright")    gSettings.brightness        = (uint8_t)constrain(toInt(value, 200), 10, 255);
         else if (key == "haptic")    gSettings.hapticClicks      = toBool(value, false);
         else if (key == "hl_style")  gSettings.highlightStyle    = (uint8_t)toInt(value, HIGHLIGHT_FILLED);
         else if (key == "kb_backlight") gSettings.keyboardBacklight = toBool(value, false);
@@ -78,6 +93,8 @@ void settingsSave() {
     f.printf("theme=%u\n", gSettings.themeId);
     f.printf("handed=%u\n", gSettings.handedness);
     f.printf("tb_cursor=%d\n", gSettings.trackballCursor ? 1 : 0);
+    f.printf("nickname=%s\n",gSettings.consoleNickname);
+    f.printf("touch=%d\n", gSettings.touchEnabled ? 1 : 0);
     f.printf("sound=%d\n", gSettings.soundEnabled ? 1 : 0);
     f.printf("batt_saver=%d\n", gSettings.batterySaver ? 1 : 0);
     f.printf("screen_timeout=%u\n", gSettings.screenTimeoutSec);
