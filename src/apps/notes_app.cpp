@@ -7,21 +7,6 @@
 #include "input.h"
 #include "menu.h"
 
-// Simple on-device notes editor, backed by plain .txt files under /notes on
-// the SD card. Full alphabet entry (not just digits/punctuation) needs
-// inputSetTextEntryMode(true) - see input.cpp's mapKeyToNav() - which is
-// only available to a firmware app like this one, not a sandboxed .zApp
-// (ZyroApi has no such call). That's the whole reason this lives here
-// instead of as an example in the SDK.
-//
-// Editing convention: Escape and Backspace both arrive as InputEvent::BACK
-// (same physical ambiguity noted in input.h), but InputResult::ch still
-// tells them apart (0x1B vs 0x08/0x7F) - unlike the Wi-Fi/LoRa text fields
-// elsewhere in this firmware, which don't use that distinction and so make
-// you backspace through everything you typed just to leave. Here: Backspace
-// erases a character, Escape saves and closes immediately, regardless of
-// how much text is in the note.
-
 namespace NotesApp {
 
 #define NOTES_DIR "/notes"

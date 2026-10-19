@@ -33,9 +33,6 @@ static bool writeRegistry(const std::vector<ZappEntry> &entries) {
     if (!ensureAppsDir()) return false;
     File f = SD.open(ZAPP_REGISTRY_PATH, FILE_WRITE);
     if (!f) return false;
-    // FILE_WRITE on this SD library appends rather than truncates on some
-    // cores - explicitly seek to 0 and let short files just end early isn't
-    // safe (stale tail bytes), so remove-then-recreate instead.
     f.close();
     SD.remove(ZAPP_REGISTRY_PATH);
     f = SD.open(ZAPP_REGISTRY_PATH, FILE_WRITE);

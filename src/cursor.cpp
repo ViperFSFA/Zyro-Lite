@@ -10,12 +10,6 @@ static const unsigned char image_cursor_black_white_bits[] = {
     0x8f,0x80,0x87,0xc0,0x8f,0xe0,0x90,0x00,0xa0,0x00,0xc0,0x00,0x80,0x00,0x00,0x00
 };
 // [END lopaka generated]
-// Drawn 1bpp, MSB-first, CURSOR_W-wide rows padded to a byte boundary -
-// exactly what Arduino_GFX's drawBitmap(x,y,bitmap,w,h,color) expects, and
-// only "on" bits get painted (color), the rest are left as whatever's
-// already there - i.e. transparent, which is why the pixels underneath have
-// to be saved separately before drawing it and restored afterwards.
-
 static int16_t cursorX = (SCREEN_W - CURSOR_W) / 2;
 static int16_t cursorY = (SCREEN_H - CURSOR_H) / 2;
 static int16_t drawnX = 0;
@@ -63,10 +57,6 @@ void cursorSuppress(bool s) {
 }
 
 void cursorInvalidate() {
-    // Something else (the SD-removed alert, most notably) just blanked or
-    // repainted the whole screen without us knowing what's there now -
-    // forget the saved backing rather than blitting stale pre-alert pixels
-    // back over the top of it on the next tick.
     backingValid = false;
 }
 
@@ -102,10 +92,7 @@ void cursorTick() {
         restoreUnder();
         return;
     }
-    // Undo last frame's sprite first (in case anything else drew over that
-    // same patch this frame - e.g. the topbar's periodic refresh - so we
-    // save fresh, correct pixels next), then composite this frame's sprite
-    // on top of everything, last.
+    
     if (backingValid && !framebufferStillHasDrawnCursor()) backingValid = false;
     restoreUnder();
     drawOver();

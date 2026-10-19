@@ -10,7 +10,7 @@
 #include "zapp_loader.h"
 #include "touch_scroll.h"
 
-extern AppModule *gActiveApp; // defined in main.cpp - My Apps launches gAppTable[10] the same way root_menu.cpp launches everything else
+extern AppModule *gActiveApp; // defined in main.cpp. My Apps launches gAppTable[10] the same way root_menu.cpp launches everything else
 extern AppModule gAppTable[];
 
 namespace FilesApp {
@@ -37,7 +37,7 @@ static int scrollTop = 0;
 static bool viewingFile = false;
 static String fileContent = "";
 
-// --- My Apps (Zyro-SDK user apps) ---
+// My Apps (Zyro-SDK user apps)
 static std::vector<ZappEntry> myApps;
 static int myAppsSel = 0;
 static int myAppsScroll = 0;
@@ -52,7 +52,7 @@ static TouchScroll fileGesture,installGesture,appsGesture;
 static bool fileTouch=false,installTouch=false,appsTouch=false;
 static uint32_t lastTouchFrame=0;
 
-static void onExit(); // forward decl - MODE_MYAPPS's OK handler below calls this before handing off to the zApp runner
+static void onExit(); // forward decl. MODE_MYAPPS's OK handler below calls this before handing off to the zApp runner
 
 static void listDir() {
     files.clear();
@@ -69,7 +69,7 @@ static void listDir() {
     sel = 0; scrollTop = 0;fileGesture.reset();fileTouch=false;
 }
 
-// --- My Apps ---------------------------------------------------------------
+// My Apps
 static void refreshMyApps() {
     myApps = zappRegistryList();
     if (myAppsSel >= (int)myApps.size()) myAppsSel = (int)myApps.size() - 1;
@@ -124,7 +124,7 @@ static void listInstallDir() {
     while (entry) {
         String name = String(entry.name());
         bool isDir = entry.isDirectory();
-        // Only show directories and .zApp files - anything else installing
+        // Only show directories and .zApp files anything else installing
         // from here would produce is out of scope, so keep the noise out.
         bool isZapp = name.endsWith(".zApp") || name.endsWith(".ZAPP") || name.endsWith(".zapp");
         if (isDir || isZapp) installFiles.push_back({ name, isDir, (size_t)entry.size() });
@@ -334,7 +334,7 @@ static void handleInput(const InputResult &in) {
 
     // Install browser's BACK returns one level up (to the My Apps list),
     // not straight out to the System Apps menu like every other screen's
-    // BACK does - has to be checked before the generic BACK case below.
+    // BACK does. has to be checked before the generic BACK case below.
     if (currentMode == MODE_MYAPPS_INSTALL) {
         if (in.type == InputEvent::BACK) {
             currentMode = MODE_MYAPPS;
@@ -367,9 +367,6 @@ static void handleInput(const InputResult &in) {
                 installPath += fe.name + "/";
                 listInstallDir(); drawInstallBrowser();
             } else {
-                // Install errors are a PC-side/SDK-build concern to review
-                // there, not something to diagnose on-device - a bad file
-                // just silently won't appear in the My Apps list below.
                 String outName;
                 zappRegistryInstall(installPath + fe.name, &outName);
                 currentMode = MODE_MYAPPS;
@@ -406,7 +403,7 @@ static void handleInput(const InputResult &in) {
         } else if (in.type == InputEvent::OK) {
             audioClickOk();
             String name = myApps[myAppsSel].name;
-            onExit(); // free this app's own state (subSubMenu etc.) before handing off, same as any other app swap
+            onExit(); 
             zappSetPending(name.c_str());
             gActiveApp = &gAppTable[10];
             gActiveApp->init();

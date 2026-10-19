@@ -46,7 +46,7 @@ static void gpsSetup() {
     }
 }
 
-// Drain incoming NMEA bytes every call - called from tick() before any draw.
+// Drain incoming NMEA bytes every call. called from tick() before any draw.
 static void gpsPoll() {
     while (Serial1.available()) {
         gps.encode(Serial1.read());
@@ -82,7 +82,7 @@ static String gpsCourseStr() {
     return String(buf);
 }
 
-// ---- GPS Fix / Status screen ----
+// GPS Fix / Status screen
 static void drawFix() {
     const Theme &t=gSettings.theme(); uiAppSurface();
     bool fix=gps.location.isValid() && gps.location.age()<5000;
@@ -100,7 +100,7 @@ static void drawFix() {
     gfx->setCursor(8,230); gfx->print("COURSE "+gpsCourseStr());
 }
 
-// ---- Coordinate Tracker / Distance screen ----
+// Coordinate Tracker / Distance screen
 static void drawTracker() {
     const Theme &t = gSettings.theme();
     uiAppSurface();
@@ -138,7 +138,7 @@ static void drawTracker() {
     gfx->print("Max spd : " + (maxSpeedKmh > 0 ? String(maxSpeedKmh, 1) + " km/h" : "--"));
     y += 16;
 
-    // Total distance accumulated (accumulate when fix is valid)
+    // Total distance accumulated 
     gfx->setTextColor(t.fg);
     gfx->setCursor(8, y);
     if (totalDistKm > 0) {
@@ -168,7 +168,7 @@ static void drawTracker() {
     gfx->print("Time    : " + gpsTimeStr());
 }
 
-// ---- Compass / Heading screen ----
+// Compass / Heading screen
 static void drawCompass() {
     const Theme &t = gSettings.theme();
     uiAppSurface();
@@ -217,7 +217,7 @@ static void drawCompass() {
     gfx->print("Speed   : " + (gps.speed.isValid() ? String(gps.speed.kmph(), 1) + " km/h" : "--"));
 }
 
-// ---- GPS Logger screen ----
+// GPS Logger screen
 static void drawLogger() {
     const Theme &t = gSettings.theme();
     uiAppSurface();

@@ -1,6 +1,6 @@
 """
 Zyro-SDK packer, turns your App.cpp (plain C++, using only zyro_sdk_api.h)
-into a AppName.zApp binary the Zyro-Lite_TDeck firmware can load.
+into a AppName.zApp binary the Zyro-Lite firmware can load.
 
 Usage:
     python pack_zapp.py MyApp.cpp
@@ -22,7 +22,7 @@ What it does, in order:
      firmware re-applies wherever it actually put your app's sections in
      RAM at load time. This is the whole trick that lets a normal C++
      build run as a relocatable blob on a device with no dynamic linker.
-  5. Packs header + relocations + code + data into <AppName>.zApp.
+  5. Packs header + relocations + code + data into AppName.zApp
 
 If the C++/link step fails, you'll see the compiler's own error. fix your
 source and re-run. If pack_zapp.py itself errors out (e.g. "app too big",
@@ -53,7 +53,7 @@ SDK_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOLS_DIR = os.path.join(SDK_DIR, "tools")
 SDK_INCLUDE = os.path.join(SDK_DIR, "include")
 SDK_SRC = os.path.join(SDK_DIR, "src")
-FW_ROOT = os.path.dirname(SDK_DIR)  # Zyro-Lite_TDeck/
+FW_ROOT = os.path.dirname(SDK_DIR)
 FW_CONFIG_H = os.path.join(FW_ROOT, "include", "config.h")
 LINKER_SCRIPT = os.path.join(TOOLS_DIR, "zapp.ld")
 
@@ -65,11 +65,7 @@ RODATA_BASE = 0x00100000
 DATA_BASE = 0x00200000
 REGION_LEN = 0x00100000  # matches zapp.ld. just needs to exceed any real app
 
-R_XTENSA_32 = 1  # the only relocation type that represents a load-time-
-                 # relevant absolute pointer. everything else (PC-relative
-                 # slot ops, diff/alignment relocs) is already fully baked
-                 # into the instruction bits by the link and needs no
-                 # further action at load time.
+R_XTENSA_32 = 1
 
 SECTION_NAMES = {"TEXT": 0, "RODATA": 1, "DATA": 2}
 
@@ -96,8 +92,7 @@ def read_fw_limit(macro_name, fallback):
         return fallback
     expr = m.group(1).strip()
     try:
-        # Handles things like "48 * 1024" safely (no arbitrary eval of
-        # unrelated text - only digits/whitespace/* survive the regex).
+        # Handles things like "48 * 1024" safely
         if not re.fullmatch(r"[0-9\s*]+", expr):
             raise ValueError(expr)
         return eval(expr, {"__builtins__": {}}, {})
@@ -118,7 +113,6 @@ def find_toolchain():
     home = os.path.expanduser("~")
     candidates.append(os.path.join(home, ".platformio", "packages",
                                     "toolchain-xtensa-esp-elf", "xtensa-esp-elf", "bin"))
-    # Older PlatformIO installs used a per-target toolchain package name.
     candidates.append(os.path.join(home, ".platformio", "packages",
                                     "toolchain-xtensa-esp32s3", "bin"))
 
@@ -224,7 +218,7 @@ def extract(elf_path, text_max, rodata_data_max):
             sections[name] = sec
 
         if sections[".text"] is None:
-            die("no .text section produced - did you define zapp_entry()?")
+            die("no .text section produced. did you define zapp_entry()?")
 
         text_sec = sections[".text"]
         text_base = text_sec["sh_addr"]

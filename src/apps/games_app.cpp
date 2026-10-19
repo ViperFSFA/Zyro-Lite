@@ -95,7 +95,7 @@ static void drawSnake() {
     }
 }
 
-// --- Pong Game ---
+// Pong Game
 static int paddleY = 80;
 static int aiPaddleY = 80;
 static float ballX = 160, ballY = 120;

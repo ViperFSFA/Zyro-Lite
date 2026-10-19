@@ -27,24 +27,8 @@ void displayInit() {
     bus = new SharedDisplaySPI(BOARD_TFT_DC, BOARD_TFT_CS,
                             BOARD_SPI_SCK, BOARD_SPI_MOSI, BOARD_SPI_MISO);
                             
-    // The ST7789 panel is natively 240x320 portrait. 
-    // Rotation 1 sets it to 320x240 landscape. 
     panel = new Arduino_ST7789(bus, -1 /*RST tied to system*/, 1 /*rotation*/, true /*IPS*/);
 
-    // BUGFIX (flicker): every screen in this firmware used to draw straight
-    // to the physical SPI panel piece by piece - a fillRect to clear the
-    // area, then text, then icons, each its own SPI transaction - which is
-    // exactly what showed up as flicker: the screen visibly being erased
-    // and rebuilt in front of you on every redraw. Wrapping the panel in an
-    // off-screen RAM canvas means every one of those same draw calls
-    // (nothing else in the codebase has to change - Arduino_Canvas supports
-    // the whole Arduino_GFX drawing API) now writes into a framebuffer
-    // instead. The physical screen is only ever updated by pushing that
-    // already-finished framebuffer over in one burst via flush() (see
-    // main.cpp's loop() and splash.cpp), so nothing partially drawn is ever
-    // visible. The board's PSRAM (BOARD_HAS_PSRAM, opi_qio_opi in
-    // platformio.ini) is exactly what a 320x240x16bpp (~150KB) framebuffer
-    // needs.
     canvas = new Arduino_Canvas(SCREEN_W, SCREEN_H, panel);
     gfx = canvas;
 
@@ -53,9 +37,6 @@ void displayInit() {
     gfx->fillScreen(0x0000); // raw RGB565 black - avoids depending on a BLACK macro that isn't reliably defined by this library/include order
     gfx->flush(); // push that initial black frame before anything else draws over it
 
-    // Keep a PSRAM copy of the last frame that reached the panel. Comparing
-    // against it is much cheaper than transmitting 150 KB over SPI every
-    // idle loop, and it lets small animations use region-only transfers.
     presentedFrame = (uint16_t *)ps_malloc(SCREEN_W * SCREEN_H * sizeof(uint16_t));
     if (presentedFrame) {
         memcpy(presentedFrame, canvas->getFramebuffer(), SCREEN_W * SCREEN_H * sizeof(uint16_t));
@@ -176,12 +157,7 @@ void drawTopbar(int batteryPct, bool charging, bool sdOk) {
     int battY = (TOPBAR_HEIGHT - TOP_BATT_H) / 2;
     drawBatteryIcon(x, battY, batteryPct, charging, battColor, t.topbarBg);
 
-    // Wi-Fi icon only, when actually connected to something. This used to
-    // also draw small filled-circle status dots for BLE/LoRa/idle-Wi-Fi next
-    // to it, packed close enough that the icon's right edge and the nearest
-    // dot painted over the same pixels. Those dots weren't earning their
-    // place (radio-on-but-idle isn't information worth a permanent topbar
-    // light), so they're gone - just the Wi-Fi icon, and only when connected.
+    // Wi-Fi icon only, when actually connected to something.
     if (WiFi.status() == WL_CONNECTED) {
         x -= 7;
         x -= 19;

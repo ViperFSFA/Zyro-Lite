@@ -1,0 +1,140 @@
+# ZYRO-LITE SOURCE AVAILABLE LICENSE
+
+Version 1.0
+
+Copyright (c) 2026 ViperFSFA and the Zyro-Lite development team.
+All rights reserved.
+
+This license governs the use of the Zyro-Lite source code, firmware, software, documentation, assets, and associated files contained within this repository (collectively, the "Software").
+
+1. VIEWING PERMISSION
+
+Permission is granted to view, inspect, download, and study the Software for personal, educational, research, security review, and evaluation purposes only.
+
+The public availability of the Software does not make the Software open source, free software, or public domain.
+
+2. RESTRICTIONS
+
+Unless you have received prior written permission from ViperFSFA, you may not:
+
+a. modify, alter, adapt, translate, or create derivative works based on the Software;
+
+b. redistribute, republish, sublicense, sell, lease, license, or otherwise provide copies of the Software, whether modified or unmodified;
+
+c. use the Software, or substantial portions of it, in another software, firmware, hardware, or commercial project;
+
+d. use the Software or its source code for commercial purposes;
+
+e. remove, modify, conceal, or misrepresent copyright notices, attribution, branding, licensing information, or other proprietary notices;
+
+f. claim the Software, its source code, or substantial portions of its implementation as your own work;
+
+g. publish modified versions, unofficial builds, derivative firmware, or competing distributions based on the Software;
+
+h. use the Software as the basis for a product or service offered to third parties;
+
+i. use the Software in a manner that suggests endorsement, affiliation, or authorization by ViperFSFA or the Zyro-Lite development team when no such relationship exists.
+
+3. FORKS
+
+GitHub and similar hosting services may technically provide functionality that allows repositories to be forked.
+
+Such technical functionality does not grant permission to modify, redistribute, publish, or develop derivative versions of the Software.
+
+Forking or making private copies solely for reviewing, studying, testing, or preserving the unmodified source code is permitted, provided that the copy remains subject to this license.
+
+Public distribution of modified forks is prohibited without prior written permission from ViperFSFA.
+
+4. CONTRIBUTIONS
+
+Development of the official Zyro-Lite project is maintained exclusively by the Zyro-Lite development team.
+
+No permission is granted by this license to modify the official repository or contribute code to the project.
+
+External pull requests may be rejected at the discretion of the project maintainers.
+
+Users may submit bug reports, issue reports, security reports, feature suggestions, or other feedback.
+
+Submission of feedback does not create any obligation for the Zyro-Lite development team to implement, accept, or respond to it.
+
+5. PERSONAL USE
+
+You may compile and run an unmodified copy of the Software for your own personal and non-commercial use, provided that:
+
+a. the Software is obtained from an official Zyro-Lite or ViperFSFA source;
+
+b. copyright and licensing notices remain intact;
+
+c. the Software is not redistributed; and
+
+d. the Software is not used as part of a commercial product or service.
+
+6. COMMERCIAL LICENSING
+
+Commercial use, redistribution, integration, modification, derivative development, or other uses not expressly permitted under this license require separate written authorization from ViperFSFA.
+
+Commercial or alternative licensing inquiries may be directed through:
+
+https://www.viperfsfa.com
+
+7. OWNERSHIP
+
+The Software is licensed, not sold.
+
+ViperFSFA and/or the applicable members of the Zyro-Lite development team retain all applicable copyright, intellectual property rights, and ownership rights in the Software.
+
+No ownership rights are transferred under this license.
+
+8. THIRD-PARTY COMPONENTS
+
+The Software may contain or depend upon third-party libraries, frameworks, source code, hardware libraries, assets, or other components.
+
+Those components remain subject to their respective licenses.
+
+Where a third-party license grants rights that cannot legally be restricted by this license, the applicable third-party license controls with respect to that component only.
+
+This license applies only to portions of the Software for which ViperFSFA or the Zyro-Lite development team holds the applicable rights.
+
+9. NO TRADEMARK LICENSE
+
+This license does not grant permission to use the names, trademarks, logos, branding, domain names, or visual identity of ViperFSFA or Zyro-Lite except when reasonably necessary to identify the original project.
+
+10. SECURITY AND RESPONSIBLE USE
+
+Zyro-Lite includes functionality relating to wireless networking, Bluetooth Low Energy, radio frequency communication, LoRa, network interfaces, packet monitoring, and related hardware capabilities.
+
+You are responsible for complying with all laws, regulations, authorization requirements, radio regulations, network policies, and third-party rights applicable to your use of the Software.
+
+Nothing in this license grants authorization to access, monitor, interfere with, transmit to, test, or interact with systems, networks, radio equipment, devices, or communications that you are not otherwise authorized to use.
+
+11. DISCLAIMER OF WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, RELIABILITY, ACCURACY, OR FITNESS FOR USE WITH ANY PARTICULAR HARDWARE.
+
+USE OF THE SOFTWARE IS ENTIRELY AT YOUR OWN RISK.
+
+12. LIMITATION OF LIABILITY
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, ViperFSFA, THE ZYRO-LITE DEVELOPMENT TEAM, AUTHORS, DEVELOPERS, AND CONTRIBUTORS SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGE, LOSS, LIABILITY, HARDWARE DAMAGE, DATA LOSS, SERVICE INTERRUPTION, LEGAL CONSEQUENCE, OR OTHER DAMAGES ARISING FROM OR RELATED TO THE SOFTWARE OR ITS USE.
+
+13. TERMINATION
+
+Your rights under this license automatically terminate if you violate its terms.
+
+Upon termination, you must cease all uses of the Software that were authorized solely by this license and remove any unauthorized copies, modifications, or distributions under your control.
+
+Sections concerning ownership, warranty disclaimers, limitations of liability, and other provisions that by their nature should survive termination shall continue to apply.
+
+14. EXCEPTIONS
+
+ViperFSFA may grant additional rights, exemptions, commercial licenses, development permissions, or distribution permissions through a separate written agreement.
+
+Such permission applies only to the person or organization to whom it was expressly granted.
+
+15. NO IMPLIED RIGHTS
+
+Any rights not expressly granted by this license are reserved.
+
+Viewing or obtaining access to the Software does not create an implied license to modify, redistribute, commercialize, sublicense, or create derivative works from it.
+
+END OF LICENSE
